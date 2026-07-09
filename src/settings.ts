@@ -16,9 +16,8 @@ export class TwineSettingTab extends PluginSettingTab {
 		containerEl.empty();
 		const settings = this.plugin.settings;
 
-		new Setting(containerEl).setName("🧵 Twine").setHeading();
 		containerEl.createEl("p", {
-			text: "Syncs this vault to your own S3-compatible bucket (Cloudflare R2, Backblaze B2). Nothing leaves this device unencrypted.",
+			text: "🧵 Syncs this vault to your own S3-compatible bucket (Cloudflare R2, Backblaze B2). Nothing leaves this device unencrypted.",
 		});
 
 		new Setting(containerEl)

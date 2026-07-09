@@ -4,6 +4,5 @@
   "version": "0.0.1",
   "minAppVersion": "1.4.0",
   "description": "Throwaway diagnostic plugin: logs app lifecycle events and tests WebCrypto APIs on this device. Delete after use.",
-  "author": "Sahil Kumar",
   "isDesktopOnly": false
 }
