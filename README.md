@@ -29,12 +29,18 @@ Any S3-compatible object storage works. Cloudflare R2 is recommended — it has 
 
 ### 2. Install the plugin
 
-Twine isn't in Obsidian's Community Plugin store (it's a personal project, not a product). Install it manually:
+Twine is in Obsidian's Community Plugin directory — [community.obsidian.md/plugins/twine](https://community.obsidian.md/plugins/twine).
+
+1. In Obsidian: Settings → Community plugins → Browse → search for "Twine" → Install → Enable.
+2. Repeat on every device you want synced, including mobile (the Community Plugins browser works the same way on Android/iOS).
+
+Updates from here on show up as a normal "Update available" in the Community Plugins tab — no manual rebuilding or file copying needed.
+
+**Manual install** (only needed for a pre-release build, or if a new release hasn't propagated into the directory's search index yet — that can take up to 24 hours after publishing):
 
 1. Download `main.js` and `manifest.json` from the [latest release](../../releases/latest).
 2. Copy both files into `<YourVault>/.obsidian/plugins/twine/` (create the folder if needed).
-3. In Obsidian: Settings → Community plugins → make sure Community plugins are enabled → find "🧵 Twine" and turn it on.
-4. Repeat on every device you want synced (see [Mobile install](#mobile-install) below for Android/iOS).
+3. In Obsidian: Settings → Community plugins → make sure Community plugins are enabled → find "Twine" and turn it on.
 
 ### 3. Configure
 
@@ -54,15 +60,16 @@ Click **Export recovery key** and save the output somewhere safe (a password man
 
 ## Mobile install
 
-Obsidian mobile doesn't offer a Community Plugin store install for plugins outside the store, so getting the plugin's files onto a phone means sideloading:
+Twine being in the Community Plugin directory means mobile install works the same as desktop: Settings → Community plugins → Browse → search "Twine" → Install.
+
+If you need to sideload instead (a pre-release build, or a fresh release that hasn't propagated to the directory's search index yet):
 
 - **Android**: connect via USB with `adb` (`brew install android-platform-tools` on macOS), enable Developer Options + USB debugging on the phone, then `adb push manifest.json main.js /storage/emulated/0/<path-to-vault>/.obsidian/plugins/twine/`.
 - **iOS**: copy the files into the vault folder via the Files app, iCloud Drive, or another file-sync method you already use to get the vault onto the device.
 
 ## Known limitations
 
-- **Personal-use scope.** No billing, no multi-tenant support, no plans to publish to the Community Plugin store as-is.
-- **Manual mobile install and updates** — no auto-update channel outside the Community Plugin store.
+- **Personal-use scope.** No billing, no multi-tenant support — it's a free tool for syncing your own vault to your own storage, not a product.
 - **No in-app version history browser yet.** Enable bucket versioning (e.g. R2 object versioning) at the storage-provider level as a safety net; a plugin-side history UI is a possible future addition.
 - **Mobile has no true background sync.** iOS/Android suspend or kill the app's JS when backgrounded — sync happens while the app is open/foregrounded (on open, on resume, on a timer, or via the manual "Sync now" command).
 - **Whole-file transfer only** — no delta/chunked sync. Fine at personal vault scale; not optimized for very large binary attachments.
