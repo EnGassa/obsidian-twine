@@ -1,20 +1,29 @@
-import { TFile, Vault } from "obsidian";
+import { App, Vault, TFile } from "obsidian";
 import { VaultAdapter, VaultFileMeta } from "./sync/adapters";
 
-/** Paths never handed to the sync engine — plugin/workspace state, not vault content. */
-const IGNORED_PREFIXES = [".obsidian/workspace", ".obsidian/plugins", ".trash/"];
-
-function isIgnored(path: string): boolean {
-	return IGNORED_PREFIXES.some((prefix) => path.startsWith(prefix));
-}
-
 export class ObsidianVaultAdapter implements VaultAdapter {
-	constructor(private readonly vault: Vault) {}
+	constructor(private readonly app: App) {}
+
+	private get vault(): Vault {
+		return this.app.vault;
+	}
+
+	/** Paths never handed to the sync engine — plugin/workspace state, not vault
+	 * content. Uses Vault#configDir rather than a hardcoded ".obsidian", since
+	 * users can (and do) configure a different config folder name. */
+	private isIgnored(path: string): boolean {
+		const configDir = this.vault.configDir;
+		return (
+			path.startsWith(`${configDir}/workspace`) ||
+			path.startsWith(`${configDir}/plugins`) ||
+			path.startsWith(".trash/")
+		);
+	}
 
 	async listFiles(): Promise<VaultFileMeta[]> {
 		return this.vault
 			.getFiles()
-			.filter((f) => !isIgnored(f.path))
+			.filter((f) => !this.isIgnored(f.path))
 			.map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size }));
 	}
 
@@ -37,7 +46,9 @@ export class ObsidianVaultAdapter implements VaultAdapter {
 
 	async deleteFile(path: string): Promise<void> {
 		const file = this.vault.getAbstractFileByPath(path);
-		if (file instanceof TFile) await this.vault.delete(file);
+		// trashFile() (not vault.delete()) respects the user's configured
+		// deletion preference — permanent, system trash, or Obsidian's .trash.
+		if (file instanceof TFile) await this.app.fileManager.trashFile(file);
 	}
 
 	private async ensureParentFolders(path: string): Promise<void> {

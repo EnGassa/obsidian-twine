@@ -16,7 +16,7 @@ export class TwineSettingTab extends PluginSettingTab {
 		containerEl.empty();
 		const settings = this.plugin.settings;
 
-		containerEl.createEl("h2", { text: "🧵 Twine" });
+		new Setting(containerEl).setName("🧵 Twine").setHeading();
 		containerEl.createEl("p", {
 			text: "Syncs this vault to your own S3-compatible bucket (Cloudflare R2, Backblaze B2). Nothing leaves this device unencrypted.",
 		});
@@ -121,7 +121,7 @@ export class TwineSettingTab extends PluginSettingTab {
 				})
 			);
 
-		containerEl.createEl("h3", { text: "Encryption passphrase" });
+		new Setting(containerEl).setName("Encryption passphrase").setHeading();
 		containerEl.createEl("p", {
 			text: "Losing this passphrase (and not having exported a recovery key) means your synced data is permanently unrecoverable. There is no server-side recovery — that's the point of end-to-end encryption.",
 			cls: "mod-warning",

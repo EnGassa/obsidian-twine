@@ -11,9 +11,6 @@ importers:
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.43
-      builtin-modules:
-        specifier: ^3.3.0
-        version: 3.3.0
       esbuild:
         specifier: ^0.20.0
         version: 0.20.2
@@ -666,10 +663,6 @@ packages:
 
   assertion-error@1.1.0:
     resolution: {integrity: sha512-jgsaNduz+ndvGyFt3uSuWqvy4lCnIJiovtouQN5JZHOKCS2QuhEdbcQHFhVksz2N2U9hXJo8odG7ETyWlEeuDw==}
-
-  builtin-modules@3.3.0:
-    resolution: {integrity: sha512-zhaCDicdLuWN5UbN5IMnFqNMhNfo919sH85y2/ea+5Yg9TsTkeZxpL+JLbp6cgYFS4sRLp3YV4S6yDuqVWHYOw==}
-    engines: {node: '>=6'}
 
   cac@6.7.14:
     resolution: {integrity: sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==}
@@ -1358,8 +1351,6 @@ snapshots:
   ansi-styles@5.2.0: {}
 
   assertion-error@1.1.0: {}
-
-  builtin-modules@3.3.0: {}
 
   cac@6.7.14: {}
 

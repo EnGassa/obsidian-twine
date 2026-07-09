@@ -124,7 +124,7 @@ export default class TwinePlugin extends Plugin {
 			const s3Config = this.getS3Config();
 
 			const result = await runSyncPass({
-				vault: new ObsidianVaultAdapter(this.app.vault),
+				vault: new ObsidianVaultAdapter(this.app),
 				remote: new S3RemoteAdapter(s3Config, keys),
 				manifest: this.syncManifest,
 				deviceName: this.settings.deviceName || "unknown-device",

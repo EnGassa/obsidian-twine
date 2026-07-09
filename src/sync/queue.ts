@@ -4,7 +4,10 @@
  * with a request per file per edit.
  */
 export class SyncQueue {
-	private timer: ReturnType<typeof setTimeout> | undefined;
+	// window.setTimeout always returns a number in a browser/Electron/Obsidian
+	// renderer context (unlike Node's global setTimeout, which @types/node's
+	// ambient declarations otherwise pull in here as NodeJS.Timeout).
+	private timer: number | undefined;
 	private pending = false;
 	private running = false;
 
@@ -15,14 +18,14 @@ export class SyncQueue {
 
 	/** Call on any event that should eventually trigger a sync pass. */
 	schedule(): void {
-		if (this.timer !== undefined) clearTimeout(this.timer);
-		this.timer = setTimeout(() => void this.trigger(), this.debounceMs);
+		if (this.timer !== undefined) window.clearTimeout(this.timer);
+		this.timer = window.setTimeout(() => void this.trigger(), this.debounceMs);
 	}
 
 	/** Runs a sync pass immediately (e.g. manual "Sync now" command). */
 	async triggerNow(): Promise<void> {
 		if (this.timer !== undefined) {
-			clearTimeout(this.timer);
+			window.clearTimeout(this.timer);
 			this.timer = undefined;
 		}
 		await this.trigger();
@@ -51,6 +54,6 @@ export class SyncQueue {
 	}
 
 	dispose(): void {
-		if (this.timer !== undefined) clearTimeout(this.timer);
+		if (this.timer !== undefined) window.clearTimeout(this.timer);
 	}
 }

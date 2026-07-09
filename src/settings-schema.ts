@@ -15,7 +15,6 @@ export interface TwineSettings {
 	passphrase: string;
 	deviceName: string;
 	syncIntervalSeconds: number;
-	ignorePatterns: string[];
 	lastSyncedAt: number | null;
 }
 
@@ -29,6 +28,5 @@ export const DEFAULT_SETTINGS: TwineSettings = {
 	passphrase: "",
 	deviceName: "",
 	syncIntervalSeconds: 20,
-	ignorePatterns: [".obsidian/workspace*", ".trash/**"],
 	lastSyncedAt: null,
 };

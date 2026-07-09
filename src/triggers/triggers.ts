@@ -43,7 +43,9 @@ export function registerSyncTriggers(
 	// does a full manifest-vs-vault rescan rather than trusting cached event
 	// deltas. Bypasses the debounce for the same reason as onLayoutReady above:
 	// this is a "check now" moment, not a rapid-fire edit needing coalescing.
-	document.addEventListener("visibilitychange", () => {
-		if (document.visibilityState === "visible") void queue.triggerNow();
-	});
+	const onVisibilityChange = () => {
+		if (activeDocument.visibilityState === "visible") void queue.triggerNow();
+	};
+	activeDocument.addEventListener("visibilitychange", onVisibilityChange);
+	plugin.register(() => activeDocument.removeEventListener("visibilitychange", onVisibilityChange));
 }
