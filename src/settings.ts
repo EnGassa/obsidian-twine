@@ -1,6 +1,7 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type TwinePlugin from "../main";
 import { deriveKeys, exportRecoveryKey } from "./crypto/crypto";
+import { splitEndpointAndBucket } from "./util/endpoint";
 
 export class TwineSettingTab extends PluginSettingTab {
 	constructor(
@@ -22,13 +23,28 @@ export class TwineSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Endpoint")
-			.setDesc("e.g. https://<accountid>.r2.cloudflarestorage.com")
-			.addText((text) =>
+			.setDesc(
+				"e.g. https://<accountid>.r2.cloudflarestorage.com — pasting the bucket URL " +
+					"straight from the Cloudflare dashboard (with the bucket name in the path) works too, it'll auto-split."
+			)
+			.addText((text) => {
+				text.setPlaceholder("https://<accountid>.r2.cloudflarestorage.com");
 				text.setValue(settings.endpoint).onChange(async (value) => {
-					settings.endpoint = value.trim();
+					const trimmed = value.trim();
+					const split = splitEndpointAndBucket(trimmed);
+
+					if (split) {
+						settings.endpoint = split.endpoint;
+						settings.bucket = split.bucket;
+						await this.plugin.saveSettings();
+						this.display(); // re-render so the Bucket field reflects the split value
+						return;
+					}
+
+					settings.endpoint = trimmed;
 					await this.plugin.saveSettings();
-				})
-			);
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Region")
@@ -40,27 +56,47 @@ export class TwineSettingTab extends PluginSettingTab {
 				})
 			);
 
-		new Setting(containerEl).setName("Bucket").addText((text) =>
+		new Setting(containerEl).setName("Bucket").addText((text) => {
+			text.setPlaceholder("my-vault-bucket");
 			text.setValue(settings.bucket).onChange(async (value) => {
 				settings.bucket = value.trim();
 				await this.plugin.saveSettings();
-			})
-		);
+			});
+		});
 
-		new Setting(containerEl).setName("Access key ID").addText((text) =>
+		new Setting(containerEl).setName("Access key ID").addText((text) => {
+			text.setPlaceholder("R2 API token access key ID");
 			text.setValue(settings.accessKeyId).onChange(async (value) => {
 				settings.accessKeyId = value.trim();
 				await this.plugin.saveSettings();
-			})
-		);
+			});
+		});
 
 		new Setting(containerEl).setName("Secret access key").addText((text) => {
 			text.inputEl.type = "password";
+			text.setPlaceholder("R2 API token secret access key");
 			text.setValue(settings.secretAccessKey).onChange(async (value) => {
 				settings.secretAccessKey = value.trim();
 				await this.plugin.saveSettings();
 			});
 		});
+
+		new Setting(containerEl)
+			.setName("Test connection")
+			.setDesc("Checks the endpoint/bucket/keys above actually reach the bucket, before you rely on them.")
+			.addButton((button) =>
+				button.setButtonText("Test connection").onClick(async () => {
+					button.setDisabled(true).setButtonText("Testing…");
+					try {
+						await this.plugin.testConnection();
+						new Notice("✅ Connected — bucket reachable.");
+					} catch (error) {
+						new Notice(`❌ Connection failed: ${String(error instanceof Error ? error.message : error)}`);
+					} finally {
+						button.setDisabled(false).setButtonText("Test connection");
+					}
+				})
+			);
 
 		new Setting(containerEl)
 			.setName("Device name")

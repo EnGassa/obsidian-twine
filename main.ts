@@ -4,7 +4,7 @@ import { ObsidianVaultAdapter } from "./src/obsidian-vault-adapter";
 import { obsidianFetcher } from "./src/store/obsidian-fetcher";
 import { TwineSettingTab } from "./src/settings";
 import { DEFAULT_SETTINGS, TwineSettings } from "./src/settings-schema";
-import { S3Config } from "./src/store/s3-client";
+import { listObjects, S3Config } from "./src/store/s3-client";
 import { S3RemoteAdapter } from "./src/store/s3-remote-adapter";
 import { getOrCreateSharedSalt } from "./src/store/sync-meta";
 import { SyncManifest } from "./src/sync/manifest";
@@ -75,6 +75,17 @@ export default class TwinePlugin extends Plugin {
 			secretAccessKey: this.settings.secretAccessKey,
 			fetcher: obsidianFetcher,
 		};
+	}
+
+	/**
+	 * Cheap connectivity check for the settings UI: lists the bucket with the
+	 * currently-entered endpoint/bucket/keys, without needing a passphrase or
+	 * a full sync pass. Throws with whatever error s3-client.ts produced
+	 * (auth failure, bucket not found, network error) — settings.ts surfaces
+	 * that message directly rather than needing its own error classification.
+	 */
+	async testConnection(): Promise<void> {
+		await listObjects(this.getS3Config(), "");
 	}
 
 	/**
