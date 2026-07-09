@@ -1,7 +1,7 @@
 import { App, Plugin } from "obsidian";
 import { SyncQueue } from "../sync/queue";
 
-const FOREGROUND_INTERVAL_MS_DEFAULT = 90_000;
+const FOREGROUND_INTERVAL_MS_DEFAULT = 20_000;
 
 /**
  * Wires every event that should trigger a sync pass to one SyncQueue. Mobile
@@ -20,7 +20,10 @@ export function registerSyncTriggers(
 ): void {
 	// On app open / layout ready: full pass, including a manifest rescan to
 	// catch any drift from a mobile app that was suspended (not just closed).
-	app.workspace.onLayoutReady(() => queue.schedule());
+	// Bypasses the debounce (triggerNow, not schedule) — this isn't a rapid-fire
+	// edit that needs coalescing, it's a natural "check now" moment where the
+	// user is actively looking at the screen wanting fresh state.
+	app.workspace.onLayoutReady(() => void queue.triggerNow());
 
 	// On vault file changes, debounced inside SyncQueue so rapid edits coalesce.
 	plugin.registerEvent(app.vault.on("create", () => queue.schedule()));
@@ -34,11 +37,13 @@ export function registerSyncTriggers(
 	plugin.registerInterval(window.setInterval(() => queue.schedule(), intervalMs));
 
 	// App resume from background: on desktop this fires while the process is
-	// still alive; on iOS the app is commonly fully suspended/killed instead, in
-	// which case "resume" is really just a fresh onLayoutReady above. Either way
-	// a fresh sync pass runs, and computeLocalStates() always does a full
-	// manifest-vs-vault rescan rather than trusting cached event deltas.
+	// still alive; on iOS/Android the app can also just be fully suspended and
+	// this is really a fresh onLayoutReady above (confirmed empirically — see
+	// plan). Either way a fresh sync pass runs, and computeLocalStates() always
+	// does a full manifest-vs-vault rescan rather than trusting cached event
+	// deltas. Bypasses the debounce for the same reason as onLayoutReady above:
+	// this is a "check now" moment, not a rapid-fire edit needing coalescing.
 	document.addEventListener("visibilitychange", () => {
-		if (document.visibilityState === "visible") queue.schedule();
+		if (document.visibilityState === "visible") void queue.triggerNow();
 	});
 }

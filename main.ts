@@ -38,7 +38,7 @@ export default class SelfSyncPlugin extends Plugin {
 			callback: () => void this.queue?.triggerNow(),
 		});
 
-		this.queue = new SyncQueue(2_500, () => this.runPass());
+		this.queue = new SyncQueue(1_200, () => this.runPass());
 		registerSyncTriggers(this, this.app, this.queue, this.settings.syncIntervalSeconds * 1000);
 	}
 

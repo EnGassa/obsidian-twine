@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS: SelfSyncSettings = {
 	saltBase64: "",
 	passphrase: "",
 	deviceName: "",
-	syncIntervalSeconds: 90,
+	syncIntervalSeconds: 20,
 	ignorePatterns: [".obsidian/workspace*", ".trash/**"],
 	lastSyncedAt: null,
 };
