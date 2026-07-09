@@ -58,6 +58,8 @@ Click **Test connection** to confirm the endpoint/bucket/keys actually work befo
 
 Click **Export recovery key** and save the output somewhere safe (a password manager, printed copy). This is the only way to recover your data if you ever forget your passphrase — there is no server-side recovery, by design.
 
+If you do forget your passphrase, paste the saved recovery key into **Settings → Twine → Import recovery key** on any device — sync will use it in place of the passphrase, no need to remember it.
+
 ## Mobile install
 
 Twine being in the Community Plugin directory means mobile install works the same as desktop: Settings → Community plugins → Browse → search "Twine" → Install.

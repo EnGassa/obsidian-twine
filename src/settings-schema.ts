@@ -13,6 +13,15 @@ export interface TwineSettings {
 	 * already stored here. Never leaves the device or gets uploaded anywhere.
 	 */
 	passphrase: string;
+	/**
+	 * Raw recovery-key string (see crypto.ts exportRecoveryKey/importRecoveryKey),
+	 * imported via Settings when the passphrase is unknown but a previously
+	 * exported recovery key is on hand (BACKLOG.md #9). When set, this takes
+	 * priority over `passphrase` for deriving sync keys — see main.ts getKeys().
+	 * Same trust tier as `passphrase`/the R2 keys already stored here: plaintext
+	 * in data.json, never leaves the device or gets uploaded anywhere.
+	 */
+	importedRecoveryKey: string;
 	deviceName: string;
 	syncIntervalSeconds: number;
 	lastSyncedAt: number | null;
@@ -26,6 +35,7 @@ export const DEFAULT_SETTINGS: TwineSettings = {
 	secretAccessKey: "",
 	saltBase64: "",
 	passphrase: "",
+	importedRecoveryKey: "",
 	deviceName: "",
 	syncIntervalSeconds: 20,
 	lastSyncedAt: null,

@@ -1,6 +1,7 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type TwinePlugin from "../main";
-import { deriveKeys, exportRecoveryKey } from "./crypto/crypto";
+import { deriveKeys, exportRecoveryKey, importRecoveryKey } from "./crypto/crypto";
+import { PassphraseMismatchError } from "./store/sync-meta";
 import { splitEndpointAndBucket } from "./util/endpoint";
 
 export class TwineSettingTab extends PluginSettingTab {
@@ -143,6 +144,44 @@ export class TwineSettingTab extends PluginSettingTab {
 				})
 			);
 
+		new Setting(containerEl).setName("Recovery").setHeading();
+
+		if (settings.importedRecoveryKey) {
+			containerEl.createEl("p", {
+				text: "A recovery key is imported and currently in use for sync instead of the passphrase above.",
+			});
+			new Setting(containerEl)
+				.setName("Clear imported recovery key")
+				.setDesc("Reverts to using the passphrase above for sync.")
+				.addButton((button) =>
+					button.setButtonText("Clear").onClick(async () => {
+						settings.importedRecoveryKey = "";
+						await this.plugin.saveSettings();
+						this.display();
+					})
+				);
+		} else {
+			containerEl.createEl("p", {
+				text: "Forgot the passphrase but have a previously exported recovery key? Paste it here to sync " +
+					"without it. This stores the key material on this device — same trust tier as the passphrase " +
+					"and R2 keys already stored here.",
+			});
+			let recoveryKeyInput = "";
+			new Setting(containerEl)
+				.setName("Import recovery key")
+				.addText((text) => {
+					text.setPlaceholder("<base64>.<base64>.<base64>");
+					text.onChange((value) => {
+						recoveryKeyInput = value.trim();
+					});
+				})
+				.addButton((button) =>
+					button.setButtonText("Import").onClick(async () => {
+						await this.importRecoveryKey(recoveryKeyInput);
+					})
+				);
+		}
+
 		if (settings.lastSyncedAt) {
 			containerEl.createEl("p", {
 				text: `Last synced: ${new Date(settings.lastSyncedAt).toLocaleString()}`,
@@ -165,9 +204,55 @@ export class TwineSettingTab extends PluginSettingTab {
 		// never generated locally — every device must share the same salt.
 		const salt = await this.plugin.ensureSalt();
 		const keys = await deriveKeys(settings.passphrase, salt);
+
+		try {
+			await this.plugin.verifyKeys(keys);
+		} catch (error) {
+			if (error instanceof PassphraseMismatchError) {
+				new Notice("❌ This passphrase doesn't match this bucket — exporting it would produce a useless recovery key.");
+				return;
+			}
+			throw error;
+		}
+
 		const recoveryKey = await exportRecoveryKey(keys);
 
 		await navigator.clipboard.writeText(recoveryKey);
 		new Notice("Recovery key copied to clipboard. Store it somewhere safe outside this vault.");
+	}
+
+	private async importRecoveryKey(recoveryKeyInput: string): Promise<void> {
+		const settings = this.plugin.settings;
+		if (!recoveryKeyInput) {
+			new Notice("Paste a recovery key first.");
+			return;
+		}
+		if (!settings.endpoint || !settings.bucket || !settings.accessKeyId || !settings.secretAccessKey) {
+			new Notice("Enter the R2/S3 endpoint, bucket, and keys first.");
+			return;
+		}
+
+		let keys;
+		try {
+			keys = await importRecoveryKey(recoveryKeyInput);
+		} catch (error) {
+			new Notice(`❌ ${error instanceof Error ? error.message : String(error)}`);
+			return;
+		}
+
+		try {
+			await this.plugin.verifyKeys(keys);
+		} catch (error) {
+			if (error instanceof PassphraseMismatchError) {
+				new Notice("❌ This recovery key doesn't match this bucket.");
+				return;
+			}
+			throw error;
+		}
+
+		settings.importedRecoveryKey = recoveryKeyInput;
+		await this.plugin.saveSettings();
+		new Notice("✅ Recovery key imported — sync will use it instead of the passphrase.");
+		this.display();
 	}
 }

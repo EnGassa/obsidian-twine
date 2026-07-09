@@ -1,28 +1,41 @@
 import { Notice, Platform, Plugin } from "obsidian";
-import { deriveKeys, DerivedKeys } from "./src/crypto/crypto";
+import { deriveKeys, DerivedKeys, importRecoveryKey, keyedContentHash } from "./src/crypto/crypto";
 import { ObsidianVaultAdapter } from "./src/obsidian-vault-adapter";
 import { obsidianFetcher } from "./src/store/obsidian-fetcher";
 import { TwineSettingTab } from "./src/settings";
 import { DEFAULT_SETTINGS, TwineSettings } from "./src/settings-schema";
+import { RemoteMetaCache } from "./src/store/remote-meta-cache";
 import { listObjects, S3Config } from "./src/store/s3-client";
 import { S3RemoteAdapter } from "./src/store/s3-remote-adapter";
-import { getOrCreateSharedSalt } from "./src/store/sync-meta";
+import { getOrCreateSharedSalt, PassphraseMismatchError, verifyOrEstablishKeyCheck } from "./src/store/sync-meta";
 import { SyncManifest } from "./src/sync/manifest";
 import { SyncQueue } from "./src/sync/queue";
 import { runSyncPass } from "./src/sync/sync-engine";
 import { registerSyncTriggers } from "./src/triggers/triggers";
-import { sha256Hex } from "./src/util/hash";
 
 interface PluginData {
 	settings: TwineSettings;
 	manifest: unknown;
+	remoteMetaCache: unknown;
 }
 
 export default class TwinePlugin extends Plugin {
 	settings!: TwineSettings;
 	private syncManifest!: SyncManifest;
+	/** Persisted across passes (not re-created per pass, unlike S3RemoteAdapter
+	 * itself) so its HEAD-avoidance cache actually pays off across the ~20s
+	 * foreground interval — see BACKLOG.md #6. */
+	private remoteMetaCache!: RemoteMetaCache;
 	private queue?: SyncQueue;
 	private statusBarItem?: HTMLElement;
+	/** Cached to avoid re-running PBKDF2 (600k iterations, twice) on every
+	 * sync pass. Invalidated whenever the input it was derived from changes —
+	 * see getKeys(). Two sources (BACKLOG.md #9): the usual passphrase+salt
+	 * derivation, or an imported recovery-key string used verbatim (no PBKDF2
+	 * needed — a recovery key already IS raw key material). */
+	private cachedKeys?:
+		| { source: "passphrase"; passphrase: string; salt: string; keys: DerivedKeys }
+		| { source: "recovery"; recoveryKey: string; keys: DerivedKeys };
 
 	async onload(): Promise<void> {
 		await this.loadSettingsAndManifest();
@@ -54,16 +67,23 @@ export default class TwinePlugin extends Plugin {
 		const data = ((await this.loadData()) ?? {}) as Partial<PluginData>;
 		this.settings = { ...DEFAULT_SETTINGS, ...data.settings };
 		this.syncManifest = SyncManifest.fromJSON(data.manifest ?? []);
+		this.remoteMetaCache = RemoteMetaCache.fromJSON(data.remoteMetaCache);
 	}
 
 	private async persist(): Promise<void> {
-		const payload: PluginData = { settings: this.settings, manifest: this.syncManifest.toJSON() };
+		const payload: PluginData = {
+			settings: this.settings,
+			manifest: this.syncManifest.toJSON(),
+			remoteMetaCache: this.remoteMetaCache.toJSON(),
+		};
 		await this.saveData(payload);
 	}
 
 	private isConfigured(): boolean {
 		const s = this.settings;
-		return Boolean(s.endpoint && s.bucket && s.accessKeyId && s.secretAccessKey && s.passphrase);
+		return Boolean(
+			s.endpoint && s.bucket && s.accessKeyId && s.secretAccessKey && (s.passphrase || s.importedRecoveryKey)
+		);
 	}
 
 	private getS3Config(): S3Config {
@@ -104,9 +124,50 @@ export default class TwinePlugin extends Plugin {
 		return salt;
 	}
 
+	/** Throws {@link PassphraseMismatchError} if `keys` doesn't match this
+	 * bucket's key-check verifier. Exposed for the settings UI (recovery key
+	 * export/import) to avoid acting on key material — passphrase-derived or
+	 * imported — that's silently wrong for this bucket. */
+	async verifyKeys(keys: DerivedKeys): Promise<void> {
+		await verifyOrEstablishKeyCheck(this.getS3Config(), keys);
+	}
+
+	/**
+	 * An imported recovery key (BACKLOG.md #9) takes priority over the
+	 * passphrase when both happen to be set — it's raw key material, not a
+	 * secret to re-derive from, so there's no salt/PBKDF2 step for it. Either
+	 * way, verifyOrEstablishKeyCheck() runs once per fresh derivation (not on
+	 * cache hits) so a wrong passphrase OR a malformed/mismatched recovery key
+	 * fails fast with a clear error instead of a cryptic one deep in list().
+	 */
 	private async getKeys(): Promise<DerivedKeys> {
+		if (this.settings.importedRecoveryKey) {
+			const recoveryKey = this.settings.importedRecoveryKey;
+			if (this.cachedKeys?.source === "recovery" && this.cachedKeys.recoveryKey === recoveryKey) {
+				return this.cachedKeys.keys;
+			}
+
+			const keys = await importRecoveryKey(recoveryKey);
+			await verifyOrEstablishKeyCheck(this.getS3Config(), keys);
+			this.cachedKeys = { source: "recovery", recoveryKey, keys };
+			return keys;
+		}
+
 		const salt = await this.ensureSalt();
-		return deriveKeys(this.settings.passphrase, salt);
+		const passphrase = this.settings.passphrase;
+
+		if (
+			this.cachedKeys?.source === "passphrase" &&
+			this.cachedKeys.passphrase === passphrase &&
+			this.cachedKeys.salt === salt
+		) {
+			return this.cachedKeys.keys;
+		}
+
+		const keys = await deriveKeys(passphrase, salt);
+		await verifyOrEstablishKeyCheck(this.getS3Config(), keys);
+		this.cachedKeys = { source: "passphrase", passphrase, salt, keys };
+		return keys;
 	}
 
 	private updateStatusBar(state: "idle" | "syncing" | "error", detail?: string): void {
@@ -125,10 +186,10 @@ export default class TwinePlugin extends Plugin {
 
 			const result = await runSyncPass({
 				vault: new ObsidianVaultAdapter(this.app),
-				remote: new S3RemoteAdapter(s3Config, keys),
+				remote: new S3RemoteAdapter(s3Config, keys, this.remoteMetaCache),
 				manifest: this.syncManifest,
 				deviceName: this.settings.deviceName || "unknown-device",
-				hashFn: sha256Hex,
+				hashFn: (bytes) => keyedContentHash(keys.contentHashKey, bytes),
 				persistManifest: () => this.persist(),
 				log: (msg) => console.log(`[twine] ${msg}`),
 			});
@@ -153,8 +214,13 @@ export default class TwinePlugin extends Plugin {
 			}
 		} catch (error) {
 			this.updateStatusBar("error");
-			console.error("[twine] sync pass failed", error);
-			new Notice(`Twine failed: ${String(error)}`);
+			if (error instanceof PassphraseMismatchError) {
+				console.error("[twine] passphrase mismatch for this bucket");
+				new Notice("🧵 Twine: passphrase doesn't match this bucket — check Settings → Twine.");
+			} else {
+				console.error("[twine] sync pass failed", error);
+				new Notice(`Twine failed: ${String(error)}`);
+			}
 		}
 	}
 }
