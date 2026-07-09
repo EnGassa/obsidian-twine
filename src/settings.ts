@@ -1,11 +1,11 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
-import type SelfSyncPlugin from "../main";
+import type TwinePlugin from "../main";
 import { deriveKeys, exportRecoveryKey } from "./crypto/crypto";
 
-export class SelfSyncSettingTab extends PluginSettingTab {
+export class TwineSettingTab extends PluginSettingTab {
 	constructor(
 		app: App,
-		private readonly plugin: SelfSyncPlugin
+		private readonly plugin: TwinePlugin
 	) {
 		super(app, plugin);
 	}
@@ -15,7 +15,7 @@ export class SelfSyncSettingTab extends PluginSettingTab {
 		containerEl.empty();
 		const settings = this.plugin.settings;
 
-		containerEl.createEl("h2", { text: "Self Sync" });
+		containerEl.createEl("h2", { text: "Twine" });
 		containerEl.createEl("p", {
 			text: "Syncs this vault to your own S3-compatible bucket (Cloudflare R2, Backblaze B2). Nothing leaves this device unencrypted.",
 		});

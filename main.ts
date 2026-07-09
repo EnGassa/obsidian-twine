@@ -2,8 +2,8 @@ import { Notice, Plugin } from "obsidian";
 import { deriveKeys, DerivedKeys } from "./src/crypto/crypto";
 import { ObsidianVaultAdapter } from "./src/obsidian-vault-adapter";
 import { obsidianFetcher } from "./src/store/obsidian-fetcher";
-import { SelfSyncSettingTab } from "./src/settings";
-import { DEFAULT_SETTINGS, SelfSyncSettings } from "./src/settings-schema";
+import { TwineSettingTab } from "./src/settings";
+import { DEFAULT_SETTINGS, TwineSettings } from "./src/settings-schema";
 import { S3Config } from "./src/store/s3-client";
 import { S3RemoteAdapter } from "./src/store/s3-remote-adapter";
 import { getOrCreateSharedSalt } from "./src/store/sync-meta";
@@ -14,26 +14,26 @@ import { registerSyncTriggers } from "./src/triggers/triggers";
 import { sha256Hex } from "./src/util/hash";
 
 interface PluginData {
-	settings: SelfSyncSettings;
+	settings: TwineSettings;
 	manifest: unknown;
 }
 
-export default class SelfSyncPlugin extends Plugin {
-	settings!: SelfSyncSettings;
+export default class TwinePlugin extends Plugin {
+	settings!: TwineSettings;
 	private syncManifest!: SyncManifest;
 	private queue?: SyncQueue;
 	private statusBarItem?: HTMLElement;
 
 	async onload(): Promise<void> {
 		await this.loadSettingsAndManifest();
-		this.addSettingTab(new SelfSyncSettingTab(this.app, this));
+		this.addSettingTab(new TwineSettingTab(this.app, this));
 
 		this.statusBarItem = this.addStatusBarItem();
 		this.updateStatusBar("idle");
 
-		this.addRibbonIcon("refresh-cw", "Sync now", () => void this.queue?.triggerNow());
+		this.addRibbonIcon("refresh-cw", "Twine: Sync now", () => void this.queue?.triggerNow());
 		this.addCommand({
-			id: "self-sync-now",
+			id: "sync-now",
 			name: "Sync now",
 			callback: () => void this.queue?.triggerNow(),
 		});
@@ -119,7 +119,7 @@ export default class SelfSyncPlugin extends Plugin {
 				deviceName: this.settings.deviceName || "unknown-device",
 				hashFn: sha256Hex,
 				persistManifest: () => this.persist(),
-				log: (msg) => console.log(`[self-sync] ${msg}`),
+				log: (msg) => console.log(`[twine] ${msg}`),
 			});
 
 			this.settings.lastSyncedAt = Date.now();
@@ -127,14 +127,14 @@ export default class SelfSyncPlugin extends Plugin {
 
 			if (result.errors.length > 0) {
 				this.updateStatusBar("error", `${result.errors.length} file(s) failed`);
-				new Notice(`Self Sync: ${result.errors.length} file(s) failed to sync — see console.`);
+				new Notice(`Twine: ${result.errors.length} file(s) failed to sync — see console.`);
 			} else {
 				this.updateStatusBar("idle", new Date().toLocaleTimeString());
 			}
 		} catch (error) {
 			this.updateStatusBar("error");
-			console.error("[self-sync] sync pass failed", error);
-			new Notice(`Self Sync failed: ${String(error)}`);
+			console.error("[twine] sync pass failed", error);
+			new Notice(`Twine failed: ${String(error)}`);
 		}
 	}
 }

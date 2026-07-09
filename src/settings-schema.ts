@@ -1,4 +1,4 @@
-export interface SelfSyncSettings {
+export interface TwineSettings {
 	endpoint: string; // e.g. "https://<accountid>.r2.cloudflarestorage.com"
 	region: string; // "auto" for R2
 	bucket: string;
@@ -19,7 +19,7 @@ export interface SelfSyncSettings {
 	lastSyncedAt: number | null;
 }
 
-export const DEFAULT_SETTINGS: SelfSyncSettings = {
+export const DEFAULT_SETTINGS: TwineSettings = {
 	endpoint: "",
 	region: "auto",
 	bucket: "",

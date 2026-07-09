@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-selfsync",
+  "name": "obsidian-twine",
   "version": "0.1.0",
   "private": true,
   "description": "Personal end-to-end encrypted vault sync via S3-compatible object storage, no server required.",
