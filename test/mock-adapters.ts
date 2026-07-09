@@ -13,6 +13,9 @@ interface VaultRecord {
 export class InMemoryVault implements VaultAdapter {
 	private files = new Map<string, VaultRecord>();
 	private clock = 1;
+	/** Per-path readFile() call counts, for tests asserting on unnecessary
+	 * re-reads (e.g. BACKLOG.md #8's mtime-bookkeeping regression test). */
+	readCounts = new Map<string, number>();
 
 	async listFiles(): Promise<VaultFileMeta[]> {
 		return Array.from(this.files.entries()).map(([path, rec]) => ({
@@ -25,6 +28,7 @@ export class InMemoryVault implements VaultAdapter {
 	async readFile(path: string): Promise<Uint8Array> {
 		const rec = this.files.get(path);
 		if (!rec) throw new Error(`Not found: ${path}`);
+		this.readCounts.set(path, (this.readCounts.get(path) ?? 0) + 1);
 		return rec.data;
 	}
 
@@ -34,6 +38,12 @@ export class InMemoryVault implements VaultAdapter {
 
 	async deleteFile(path: string): Promise<void> {
 		this.files.delete(path);
+	}
+
+	async stat(path: string): Promise<VaultFileMeta> {
+		const rec = this.files.get(path);
+		if (!rec) throw new Error(`Not found: ${path}`);
+		return { path, mtime: rec.mtime, size: rec.data.byteLength };
 	}
 
 	/** Test helper: directly seed a file without going through writeFile's clock. */
