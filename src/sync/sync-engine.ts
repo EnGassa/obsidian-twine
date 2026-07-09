@@ -159,9 +159,12 @@ async function applyUploadLocal(ctx: SyncEngineContext, entry: SyncPlanEntry): P
 	const bytes = await ctx.vault.readFile(entry.path);
 	const contentHash = local.contentHash;
 
-	const options = entry.manifestEntry
-		? { ifMatch: entry.manifestEntry.remoteEtag }
-		: { ifNoneMatch: "*" as const };
+	// Condition on the etag classify() just observed THIS pass (entry.remote),
+	// not the manifest's cached one — the cached value can go stale or (as
+	// happened live 2026-07-09) get corrupted, and conditioning on it instead
+	// of the freshly-listed remote state means a bad cached value can never
+	// self-heal: every retry keeps failing against the same wrong condition.
+	const options = entry.remote ? { ifMatch: entry.remote.etag } : { ifNoneMatch: "*" as const };
 
 	const { etag } = await ctx.remote.put(entry.path, bytes, options);
 
@@ -239,6 +242,8 @@ async function applyDeleteLocal(ctx: SyncEngineContext, entry: SyncPlanEntry): P
 }
 
 async function applyDeleteRemote(ctx: SyncEngineContext, entry: SyncPlanEntry): Promise<void> {
-	await ctx.remote.delete(entry.path, entry.manifestEntry?.remoteEtag);
+	// Same reasoning as applyUploadLocal: condition on the freshly-observed
+	// remote etag, not a potentially stale/corrupted cached manifest value.
+	await ctx.remote.delete(entry.path, entry.remote?.etag);
 	ctx.manifest.delete(entry.path);
 }

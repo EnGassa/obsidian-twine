@@ -206,6 +206,19 @@ async function signedRequest(config: S3Config, req: SignedRequestInit): Promise<
 
 const METADATA_PREFIX = "x-amz-meta-";
 
+/**
+ * Strips ETag quoting before we store/compare it. Handles both the normal
+ * HTTP form (`"abc123"`) AND HTML-entity-encoded quotes (`&quot;abc123&quot;`)
+ * — confirmed empirically (2026-07-09, Obsidian desktop via requestUrl())
+ * that Obsidian's requestUrl() can return header values with literal quote
+ * characters already HTML-escaped. Without this, a plain `.replace(/"/g, "")`
+ * silently leaves the entity-encoded junk in place, corrupting every
+ * conditional write (`If-Match`) that depends on this value downstream.
+ */
+function normalizeEtag(raw: string | null): string {
+	return (raw ?? "").replace(/&quot;/g, "").replace(/"/g, "");
+}
+
 export async function putObject(
 	config: S3Config,
 	key: string,
@@ -225,7 +238,7 @@ export async function putObject(
 	if (res.status === 412) throw new PreconditionFailedError();
 	if (!res.ok) throw new Error(`PUT ${key} failed: ${res.status} ${await res.text()}`);
 
-	const etag = (res.headers.get("etag") ?? "").replace(/"/g, "");
+	const etag = normalizeEtag(res.headers.get("etag"));
 	return { etag };
 }
 
@@ -236,7 +249,7 @@ export async function getObject(config: S3Config, key: string): Promise<GetResul
 	if (!res.ok) throw new Error(`GET ${key} failed: ${res.status} ${await res.text()}`);
 
 	const body = new Uint8Array(await res.arrayBuffer());
-	const etag = (res.headers.get("etag") ?? "").replace(/"/g, "");
+	const etag = normalizeEtag(res.headers.get("etag"));
 	const metadata: Record<string, string> = {};
 	res.headers.forEach((value, name) => {
 		if (name.toLowerCase().startsWith(METADATA_PREFIX)) {
@@ -259,7 +272,7 @@ export async function headObject(config: S3Config, key: string): Promise<HeadRes
 	if (res.status === 404) throw new NotFoundError(key);
 	if (!res.ok) throw new Error(`HEAD ${key} failed: ${res.status}`);
 
-	const etag = (res.headers.get("etag") ?? "").replace(/"/g, "");
+	const etag = normalizeEtag(res.headers.get("etag"));
 	const metadata: Record<string, string> = {};
 	res.headers.forEach((value, name) => {
 		if (name.toLowerCase().startsWith(METADATA_PREFIX)) {
@@ -313,7 +326,7 @@ function parseListObjectsXml(xml: string): ListedObject[] {
 	while ((match = contentsRegex.exec(xml)) !== null) {
 		const block = match[1];
 		const key = block.match(/<Key>([^<]*)<\/Key>/)?.[1] ?? "";
-		const etag = (block.match(/<ETag>"?([^<"]*)"?<\/ETag>/)?.[1] ?? "").replace(/"/g, "");
+		const etag = normalizeEtag(decodeXmlEntities(block.match(/<ETag>(.*?)<\/ETag>/)?.[1] ?? ""));
 		const size = Number(block.match(/<Size>([^<]*)<\/Size>/)?.[1] ?? "0");
 		const lastModified = block.match(/<LastModified>([^<]*)<\/LastModified>/)?.[1] ?? "";
 		objects.push({ key: decodeXmlEntities(key), etag, size, lastModified });

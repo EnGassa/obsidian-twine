@@ -200,3 +200,31 @@ describe("case-insensitive filesystem collisions (known limitation)", () => {
 		// last would silently clobber the other with zero conflict signal.
 	});
 });
+
+describe("stale or corrupted cached remoteEtag self-heals", () => {
+	it("uploads successfully by conditioning on the freshly-observed remote etag, not a stale manifest one", async () => {
+		// Regression test for a live bug found 2026-07-09: applyUploadLocal used
+		// to condition its If-Match on manifestEntry.remoteEtag (the LAST
+		// successfully-synced value) instead of entry.remote.etag (what
+		// classify() just observed THIS pass). When the cached value went bad
+		// for any reason — here simulated directly, but it happened for real via
+		// an ETag-header encoding bug — every retry kept failing against the
+		// same wrong condition forever, with no way to self-heal.
+		const remote = new InMemoryRemote();
+		const vault = new InMemoryVault();
+		const manifest = new SyncManifest();
+
+		vault.seed("note.md", "original", 1);
+		await runSyncPass(makeCtx(vault, remote, manifest, "device-a"));
+
+		const goodEntry = manifest.get("note.md")!;
+		manifest.set({ ...goodEntry, remoteEtag: "totally-corrupted-etag-value" });
+
+		vault.seed("note.md", "edited after corruption", 10);
+		const result = await runSyncPass(makeCtx(vault, remote, manifest, "device-a"));
+
+		expect(result.errors).toHaveLength(0);
+		expect(remote.readText("note.md")).toBe("edited after corruption");
+		expect(manifest.get("note.md")?.remoteEtag).not.toBe("totally-corrupted-etag-value");
+	});
+});
