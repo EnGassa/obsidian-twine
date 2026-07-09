@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-selfsync",
+  "name": "Self Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Personal end-to-end encrypted vault sync via S3-compatible object storage (Cloudflare R2 / Backblaze B2), no server required.",
+  "author": "Sahil Kumar",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
