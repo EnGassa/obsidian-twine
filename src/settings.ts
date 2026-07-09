@@ -1,6 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type SelfSyncPlugin from "../main";
-import { deriveKeys, exportRecoveryKey, generateSaltBase64 } from "./crypto/crypto";
+import { deriveKeys, exportRecoveryKey } from "./crypto/crypto";
 
 export class SelfSyncSettingTab extends PluginSettingTab {
 	constructor(
@@ -121,12 +121,15 @@ export class SelfSyncSettingTab extends PluginSettingTab {
 			new Notice("Enter a passphrase first.");
 			return;
 		}
-		if (!settings.saltBase64) {
-			settings.saltBase64 = generateSaltBase64();
-			await this.plugin.saveSettings();
+		if (!settings.endpoint || !settings.bucket || !settings.accessKeyId || !settings.secretAccessKey) {
+			new Notice("Enter the R2/S3 endpoint, bucket, and keys first — the salt is shared via the bucket.");
+			return;
 		}
 
-		const keys = await deriveKeys(settings.passphrase, settings.saltBase64);
+		// Fetched from the bucket (or created there if this is the first device),
+		// never generated locally — every device must share the same salt.
+		const salt = await this.plugin.ensureSalt();
+		const keys = await deriveKeys(settings.passphrase, salt);
 		const recoveryKey = await exportRecoveryKey(keys);
 
 		await navigator.clipboard.writeText(recoveryKey);

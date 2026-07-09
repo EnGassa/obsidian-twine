@@ -1,10 +1,11 @@
 import { Notice, Plugin } from "obsidian";
-import { deriveKeys, DerivedKeys, generateSaltBase64 } from "./src/crypto/crypto";
+import { deriveKeys, DerivedKeys } from "./src/crypto/crypto";
 import { ObsidianVaultAdapter } from "./src/obsidian-vault-adapter";
 import { SelfSyncSettingTab } from "./src/settings";
 import { DEFAULT_SETTINGS, SelfSyncSettings } from "./src/settings-schema";
 import { S3Config } from "./src/store/s3-client";
 import { S3RemoteAdapter } from "./src/store/s3-remote-adapter";
+import { getOrCreateSharedSalt } from "./src/store/sync-meta";
 import { SyncManifest } from "./src/sync/manifest";
 import { SyncQueue } from "./src/sync/queue";
 import { runSyncPass } from "./src/sync/sync-engine";
@@ -52,11 +53,6 @@ export default class SelfSyncPlugin extends Plugin {
 		const data = ((await this.loadData()) ?? {}) as Partial<PluginData>;
 		this.settings = { ...DEFAULT_SETTINGS, ...data.settings };
 		this.syncManifest = SyncManifest.fromJSON(data.manifest ?? []);
-
-		if (!this.settings.saltBase64) {
-			this.settings.saltBase64 = generateSaltBase64();
-			await this.persist();
-		}
 	}
 
 	private async persist(): Promise<void> {
@@ -69,8 +65,35 @@ export default class SelfSyncPlugin extends Plugin {
 		return Boolean(s.endpoint && s.bucket && s.accessKeyId && s.secretAccessKey && s.passphrase);
 	}
 
+	private getS3Config(): S3Config {
+		return {
+			endpoint: this.settings.endpoint,
+			region: this.settings.region,
+			bucket: this.settings.bucket,
+			accessKeyId: this.settings.accessKeyId,
+			secretAccessKey: this.settings.secretAccessKey,
+		};
+	}
+
+	/**
+	 * The PBKDF2 salt must be identical across every device syncing to this
+	 * bucket (same passphrase + different salt = different key = nothing
+	 * decrypts across devices). Fetched from the bucket itself (unencrypted,
+	 * see src/store/sync-meta.ts) rather than generated locally per-device,
+	 * so a second device picks up the first device's salt automatically.
+	 */
+	async ensureSalt(): Promise<string> {
+		if (this.settings.saltBase64) return this.settings.saltBase64;
+
+		const salt = await getOrCreateSharedSalt(this.getS3Config());
+		this.settings.saltBase64 = salt;
+		await this.persist();
+		return salt;
+	}
+
 	private async getKeys(): Promise<DerivedKeys> {
-		return deriveKeys(this.settings.passphrase, this.settings.saltBase64);
+		const salt = await this.ensureSalt();
+		return deriveKeys(this.settings.passphrase, salt);
 	}
 
 	private updateStatusBar(state: "idle" | "syncing" | "error", detail?: string): void {
@@ -85,13 +108,7 @@ export default class SelfSyncPlugin extends Plugin {
 		this.updateStatusBar("syncing");
 		try {
 			const keys = await this.getKeys();
-			const s3Config: S3Config = {
-				endpoint: this.settings.endpoint,
-				region: this.settings.region,
-				bucket: this.settings.bucket,
-				accessKeyId: this.settings.accessKeyId,
-				secretAccessKey: this.settings.secretAccessKey,
-			};
+			const s3Config = this.getS3Config();
 
 			const result = await runSyncPass({
 				vault: new ObsidianVaultAdapter(this.app.vault),
