@@ -8,11 +8,17 @@
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint ."
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^8.63.0",
+    "@typescript-eslint/parser": "^8.63.0",
+    "@vitest/coverage-v8": "1.6.1",
     "esbuild": "^0.20.0",
+    "eslint": "^10.6.0",
     "obsidian": "latest",
     "tslib": "^2.6.2",
     "tsx": "^4.23.0",

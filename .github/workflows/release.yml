@@ -31,6 +31,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - run: pnpm test
+
       - run: pnpm run build
 
       # Lets users cryptographically verify main.js was actually built from
