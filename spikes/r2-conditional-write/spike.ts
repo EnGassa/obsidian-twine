@@ -16,9 +16,15 @@
  * sync, since it cleans up after itself.
  */
 
-import { deleteObject, getObject, PreconditionFailedError, putObject, S3Config } from "../../src/store/s3-client";
+import { deleteObject, Fetcher, getObject, PreconditionFailedError, putObject, S3Config } from "../../src/store/s3-client";
 
 const KEY = "selfsync-spike-test";
+
+/** s3-client.ts requires an explicit fetcher (no built-in default) so the
+ * real plugin can never accidentally call plain fetch() — Node's fetch has
+ * no CORS restriction, so this thin wrapper is all a standalone script needs. */
+const nodeFetcher: Fetcher = (url, init) =>
+	fetch(url, { method: init.method, headers: init.headers, body: init.body as BodyInit | undefined });
 
 function requireEnv(name: string): string {
 	const value = process.env[name];
@@ -36,6 +42,7 @@ async function main(): Promise<void> {
 		bucket: requireEnv("R2_BUCKET"),
 		accessKeyId: requireEnv("R2_ACCESS_KEY_ID"),
 		secretAccessKey: requireEnv("R2_SECRET_ACCESS_KEY"),
+		fetcher: nodeFetcher,
 	};
 
 	console.log("1. Cleaning up any stale spike object from a previous run...");

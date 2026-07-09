@@ -27,20 +27,19 @@ export type Fetcher = (
 	init: { method: string; headers: Record<string, string>; body?: Uint8Array }
 ) => Promise<FetchLikeResponse>;
 
-const defaultFetcher: Fetcher = (url, init) =>
-	fetch(url, { method: init.method, headers: init.headers, body: init.body as BodyInit | undefined });
-
 export interface S3Config {
 	endpoint: string; // e.g. "https://<accountid>.r2.cloudflarestorage.com"
 	region: string; // "auto" for R2
 	bucket: string;
 	accessKeyId: string;
 	secretAccessKey: string;
-	/** Defaults to global fetch. Obsidian plugin code should pass the
-	 * requestUrl()-based fetcher from obsidian-fetcher.ts, since plain fetch
-	 * is subject to CORS inside Obsidian's renderer and R2/S3 buckets don't
-	 * allow arbitrary cross-origin requests by default. */
-	fetcher?: Fetcher;
+	/** Required, no default — this module never calls fetch() itself. Obsidian
+	 * plugin code must pass the requestUrl()-based fetcher from
+	 * obsidian-fetcher.ts (plain fetch is CORS-blocked inside Obsidian's
+	 * renderer, and R2/S3 buckets don't allow arbitrary cross-origin requests
+	 * by default); Node callers (spike scripts) supply their own thin fetch
+	 * wrapper instead, since this module has no Node-vs-Obsidian awareness. */
+	fetcher: Fetcher;
 }
 
 export interface PutOptions {
@@ -200,8 +199,7 @@ async function signedRequest(config: S3Config, req: SignedRequestInit): Promise<
 		authorization: authHeader,
 	};
 
-	const fetcher = config.fetcher ?? defaultFetcher;
-	return fetcher(fetchUrl, { method: req.method, headers: fetchHeaders, body: req.body });
+	return config.fetcher(fetchUrl, { method: req.method, headers: fetchHeaders, body: req.body });
 }
 
 const METADATA_PREFIX = "x-amz-meta-";

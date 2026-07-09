@@ -1,8 +1,9 @@
 {
   "id": "twine",
   "name": "Twine",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "minAppVersion": "1.6.6",
   "description": "Sync your vault to your own S3-compatible object storage, such as Cloudflare R2 or Backblaze B2, end-to-end encrypted, with no server required.",
+  "author": "EnGassa",
   "isDesktopOnly": false
 }

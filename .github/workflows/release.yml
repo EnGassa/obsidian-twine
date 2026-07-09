@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -30,6 +32,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm run build
+
+      # Lets users cryptographically verify main.js was actually built from
+      # this repo's source in CI, not hand-built and uploaded from a laptop.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: main.js
 
       - name: Read manifest version
         id: manifest
