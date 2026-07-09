@@ -1,4 +1,4 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Platform, Plugin } from "obsidian";
 import { deriveKeys, DerivedKeys } from "./src/crypto/crypto";
 import { ObsidianVaultAdapter } from "./src/obsidian-vault-adapter";
 import { obsidianFetcher } from "./src/store/obsidian-fetcher";
@@ -141,6 +141,15 @@ export default class TwinePlugin extends Plugin {
 				new Notice(`Twine: ${result.errors.length} file(s) failed to sync — see console.`);
 			} else {
 				this.updateStatusBar("idle", new Date().toLocaleTimeString());
+
+				// addStatusBarItem() isn't supported on Obsidian mobile at all (desktop-only
+				// API), so the status bar above is silently invisible there. Mobile users'
+				// only feedback is this Notice — shown only when a pass actually changed
+				// something, not on every idle poll, so it doesn't spam every ~20s.
+				const actedCount = result.plan.filter((entry) => entry.action !== "noop").length;
+				if (Platform.isMobile && actedCount > 0) {
+					new Notice(`🧵 Twine: synced ${actedCount} file${actedCount === 1 ? "" : "s"}.`);
+				}
 			}
 		} catch (error) {
 			this.updateStatusBar("error");
