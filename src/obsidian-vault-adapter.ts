@@ -1,5 +1,6 @@
 import { App, Vault, TFile } from "obsidian";
 import { VaultAdapter, VaultFileMeta } from "./sync/adapters";
+import { normalizePath } from "./util/path";
 
 export class ObsidianVaultAdapter implements VaultAdapter {
 	constructor(private readonly app: App) {}
@@ -21,34 +22,48 @@ export class ObsidianVaultAdapter implements VaultAdapter {
 	}
 
 	async listFiles(): Promise<VaultFileMeta[]> {
+		// Normalized so the same logical file reports the same path regardless
+		// of which OS's filesystem API produced it (see util/path.ts). Note this
+		// doesn't fully close the Unicode gap: getAbstractFileByPath() below
+		// still looks the file up by whatever form the OS/Obsidian actually
+		// indexed it under, which is a residual platform risk we can't resolve
+		// from here — see BACKLOG.md #3.
 		return this.vault
 			.getFiles()
 			.filter((f) => !this.isIgnored(f.path))
-			.map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size }));
+			.map((f) => ({ path: normalizePath(f.path), mtime: f.stat.mtime, size: f.stat.size }));
 	}
 
 	async readFile(path: string): Promise<Uint8Array> {
-		const file = this.vault.getAbstractFileByPath(path);
+		const file = this.vault.getAbstractFileByPath(normalizePath(path));
 		if (!(file instanceof TFile)) throw new Error(`Not a file: ${path}`);
 		return new Uint8Array(await this.vault.readBinary(file));
 	}
 
 	async writeFile(path: string, data: Uint8Array): Promise<void> {
-		const existing = this.vault.getAbstractFileByPath(path);
+		const normalized = normalizePath(path);
+		const existing = this.vault.getAbstractFileByPath(normalized);
 		if (existing instanceof TFile) {
 			await this.vault.modifyBinary(existing, data.buffer as ArrayBuffer);
 			return;
 		}
 
-		await this.ensureParentFolders(path);
-		await this.vault.createBinary(path, data.buffer as ArrayBuffer);
+		await this.ensureParentFolders(normalized);
+		await this.vault.createBinary(normalized, data.buffer as ArrayBuffer);
 	}
 
 	async deleteFile(path: string): Promise<void> {
-		const file = this.vault.getAbstractFileByPath(path);
+		const file = this.vault.getAbstractFileByPath(normalizePath(path));
 		// trashFile() (not vault.delete()) respects the user's configured
 		// deletion preference — permanent, system trash, or Obsidian's .trash.
 		if (file instanceof TFile) await this.app.fileManager.trashFile(file);
+	}
+
+	async stat(path: string): Promise<VaultFileMeta> {
+		const normalized = normalizePath(path);
+		const file = this.vault.getAbstractFileByPath(normalized);
+		if (!(file instanceof TFile)) throw new Error(`Not a file: ${path}`);
+		return { path: normalized, mtime: file.stat.mtime, size: file.stat.size };
 	}
 
 	private async ensureParentFolders(path: string): Promise<void> {

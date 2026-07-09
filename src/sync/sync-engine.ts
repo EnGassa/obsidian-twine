@@ -4,6 +4,7 @@ import { resolveConflict } from "./conflict";
 import { SyncManifest } from "./manifest";
 import { LocalFileState, RemoteFileState, SyncPlanEntry } from "./types";
 import { PreconditionFailedError } from "../store/s3-client";
+import { sha256Hex } from "../util/hash";
 
 export interface SyncEngineContext {
 	vault: VaultAdapter;
@@ -47,7 +48,18 @@ async function computeLocalStates(ctx: SyncEngineContext): Promise<LocalFileStat
 
 		const bytes = await ctx.vault.readFile(file.path);
 		const contentHash = await ctx.hashFn(bytes);
-		states.push({ path: file.path, contentHash, mtime: file.mtime, size: file.size });
+
+		// No manifest baseline for this path means change-detector.ts may need to
+		// compare directly against a remote object's hash with no prior sync to
+		// anchor the comparison. If that remote object predates the keyed
+		// content-hash migration (BACKLOG.md #2), its stored hash is a bare
+		// SHA-256 — compute that here too (bytes are already in hand) so
+		// identical content isn't misclassified as a conflict. Cheap: this branch
+		// only runs for genuinely new-to-this-device paths, not the common
+		// unchanged-file steady state above.
+		const legacyContentHash = manifestEntry === undefined ? await sha256Hex(bytes) : undefined;
+
+		states.push({ path: file.path, contentHash, mtime: file.mtime, size: file.size, legacyContentHash });
 	}
 
 	return states;
@@ -181,12 +193,17 @@ async function applyUploadLocal(ctx: SyncEngineContext, entry: SyncPlanEntry): P
 async function applyDownloadRemote(ctx: SyncEngineContext, entry: SyncPlanEntry): Promise<void> {
 	const result = await ctx.remote.get(entry.path);
 	await ctx.vault.writeFile(entry.path, result.plaintext);
+	// Real mtime the vault just assigned, not Date.now() — see adapters.ts'
+	// VaultAdapter#stat doc comment (BACKLOG.md #8): using the wrong value here
+	// makes computeLocalStates() miss its cheap unchanged-check on every single
+	// pass after a download, forcing a needless full re-read+re-hash forever.
+	const stat = await ctx.vault.stat(entry.path);
 
 	ctx.manifest.set({
 		path: entry.path,
 		contentHash: result.contentHash,
-		mtime: Date.now(),
-		size: result.plaintext.byteLength,
+		mtime: stat.mtime,
+		size: stat.size,
 		remoteEtag: result.etag,
 		lastSyncedHash: result.contentHash,
 	});
@@ -220,12 +237,15 @@ async function applyConflict(ctx: SyncEngineContext, entry: SyncPlanEntry): Prom
 		const localBytes = await ctx.vault.readFile(entry.path);
 		await ctx.vault.writeFile(resolution.conflictCopyPath, localBytes);
 		await ctx.vault.writeFile(entry.path, remoteResult.plaintext);
+		// Real mtime the vault just assigned — see applyDownloadRemote's comment
+		// and BACKLOG.md #8.
+		const stat = await ctx.vault.stat(entry.path);
 
 		ctx.manifest.set({
 			path: entry.path,
 			contentHash: remoteResult.contentHash,
-			mtime: Date.now(),
-			size: remoteResult.plaintext.byteLength,
+			mtime: stat.mtime,
+			size: stat.size,
 			remoteEtag: remoteResult.etag,
 			lastSyncedHash: remoteResult.contentHash,
 		});

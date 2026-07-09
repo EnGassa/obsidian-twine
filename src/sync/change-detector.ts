@@ -80,8 +80,15 @@ function classify(
 	// Both sides have the file.
 	if (local && remote) {
 		if (!manifestEntry) {
-			// Never synced before, both sides independently have this path.
-			return { ...base, action: local.contentHash === remote.contentHash ? "noop" : "conflict" };
+			// Never synced before, both sides independently have this path. If the
+			// remote object predates the keyed content-hash migration (BACKLOG.md
+			// #2), its stored hash isn't in the same format as local.contentHash
+			// (keyed HMAC) — compare against local's legacy SHA-256 instead so
+			// byte-identical content isn't misclassified as a conflict.
+			const matches = remote.hashIsLegacy
+				? local.legacyContentHash !== undefined && local.legacyContentHash === remote.contentHash
+				: local.contentHash === remote.contentHash;
+			return { ...base, action: matches ? "noop" : "conflict" };
 		}
 
 		const localChanged = local.contentHash !== manifestEntry.lastSyncedHash;

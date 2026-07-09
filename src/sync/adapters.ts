@@ -17,6 +17,13 @@ export interface VaultAdapter {
 	readFile(path: string): Promise<Uint8Array>;
 	writeFile(path: string, data: Uint8Array, mtime?: number): Promise<void>;
 	deleteFile(path: string): Promise<void>;
+	/** Real on-disk mtime/size for a just-written file, per the vault's own
+	 * bookkeeping. Used after downloadRemote/conflict writes (BACKLOG.md #8)
+	 * to record what the vault ACTUALLY assigned, rather than Date.now() —
+	 * which nearly always differs from it (by even a few ms), causing the
+	 * cheap mtime/size unchanged-check in computeLocalStates() to miss on the
+	 * very next pass and force an unnecessary full re-read+re-hash. */
+	stat(path: string): Promise<VaultFileMeta>;
 }
 
 export interface RemoteObjectMeta {
@@ -28,6 +35,8 @@ export interface RemoteObjectMeta {
 	lastModified: string;
 	/** Plaintext content hash, carried as object metadata so it survives encryption. */
 	contentHash: string;
+	/** True if this object predates the keyed content-hash migration (BACKLOG.md #2). */
+	hashIsLegacy?: boolean;
 }
 
 export interface RemoteGetResult {
