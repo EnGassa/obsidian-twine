@@ -31,7 +31,7 @@ export default class TwinePlugin extends Plugin {
 		this.statusBarItem = this.addStatusBarItem();
 		this.updateStatusBar("idle");
 
-		this.addRibbonIcon("refresh-cw", "Twine: Sync now", () => void this.queue?.triggerNow());
+		this.addRibbonIcon("refresh-cw", "🧵 Twine: Sync now", () => void this.queue?.triggerNow());
 		this.addCommand({
 			id: "sync-now",
 			name: "Sync now",
