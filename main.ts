@@ -1,6 +1,7 @@
 import { Notice, Plugin } from "obsidian";
 import { deriveKeys, DerivedKeys } from "./src/crypto/crypto";
 import { ObsidianVaultAdapter } from "./src/obsidian-vault-adapter";
+import { obsidianFetcher } from "./src/store/obsidian-fetcher";
 import { SelfSyncSettingTab } from "./src/settings";
 import { DEFAULT_SETTINGS, SelfSyncSettings } from "./src/settings-schema";
 import { S3Config } from "./src/store/s3-client";
@@ -72,6 +73,7 @@ export default class SelfSyncPlugin extends Plugin {
 			bucket: this.settings.bucket,
 			accessKeyId: this.settings.accessKeyId,
 			secretAccessKey: this.settings.secretAccessKey,
+			fetcher: obsidianFetcher,
 		};
 	}
 

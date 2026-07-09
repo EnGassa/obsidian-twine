@@ -8,12 +8,39 @@
 
 import { asBufferSource } from "../util/bytes";
 
+/** Minimal shape both native `fetch`'s Response and an Obsidian requestUrl()
+ * adapter can satisfy, so this client works identically under Node (spike
+ * scripts, tests) and inside Obsidian (where plain fetch is CORS-blocked). */
+export interface FetchLikeResponse {
+	readonly ok: boolean;
+	readonly status: number;
+	readonly headers: {
+		get(name: string): string | null;
+		forEach(callback: (value: string, name: string) => void): void;
+	};
+	arrayBuffer(): Promise<ArrayBuffer>;
+	text(): Promise<string>;
+}
+
+export type Fetcher = (
+	url: string,
+	init: { method: string; headers: Record<string, string>; body?: Uint8Array }
+) => Promise<FetchLikeResponse>;
+
+const defaultFetcher: Fetcher = (url, init) =>
+	fetch(url, { method: init.method, headers: init.headers, body: init.body as BodyInit | undefined });
+
 export interface S3Config {
 	endpoint: string; // e.g. "https://<accountid>.r2.cloudflarestorage.com"
 	region: string; // "auto" for R2
 	bucket: string;
 	accessKeyId: string;
 	secretAccessKey: string;
+	/** Defaults to global fetch. Obsidian plugin code should pass the
+	 * requestUrl()-based fetcher from obsidian-fetcher.ts, since plain fetch
+	 * is subject to CORS inside Obsidian's renderer and R2/S3 buckets don't
+	 * allow arbitrary cross-origin requests by default. */
+	fetcher?: Fetcher;
 }
 
 export interface PutOptions {
@@ -113,7 +140,7 @@ interface SignedRequestInit {
 	body?: Uint8Array;
 }
 
-async function signedRequest(config: S3Config, req: SignedRequestInit): Promise<Response> {
+async function signedRequest(config: S3Config, req: SignedRequestInit): Promise<FetchLikeResponse> {
 	const service = "s3";
 	const { amzDate: date, dateStamp } = amzDate();
 	const bodyHash = await sha256Hex(req.body ?? new Uint8Array());
@@ -173,11 +200,8 @@ async function signedRequest(config: S3Config, req: SignedRequestInit): Promise<
 		authorization: authHeader,
 	};
 
-	return fetch(fetchUrl, {
-		method: req.method,
-		headers: fetchHeaders,
-		body: req.body as BodyInit | undefined,
-	});
+	const fetcher = config.fetcher ?? defaultFetcher;
+	return fetcher(fetchUrl, { method: req.method, headers: fetchHeaders, body: req.body });
 }
 
 const METADATA_PREFIX = "x-amz-meta-";
