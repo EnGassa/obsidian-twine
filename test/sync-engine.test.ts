@@ -4,12 +4,15 @@ import { runSyncPass, SyncEngineContext } from "../src/sync/sync-engine";
 import { sha256Hex } from "../src/util/hash";
 import { RemoteAdapter } from "../src/sync/adapters";
 import { InMemoryRemote, InMemoryVault } from "./mock-adapters";
+import { BaseContentCache } from "../src/sync/base-cache";
+import { PreconditionFailedError } from "../src/store/s3-client";
 
 function makeCtx(
 	vault: InMemoryVault,
 	remote: RemoteAdapter,
 	manifest: SyncManifest,
-	deviceName: string
+	deviceName: string,
+	baseCache?: BaseContentCache
 ): SyncEngineContext {
 	return {
 		vault,
@@ -18,8 +21,68 @@ function makeCtx(
 		deviceName,
 		hashFn: sha256Hex,
 		persistManifest: async () => {},
+		baseCache,
 	};
 }
+
+async function makeCache(): Promise<BaseContentCache> {
+	const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+	return new BaseContentCache(key as CryptoKey);
+}
+
+describe("conservative text merge integration", () => {
+	it("merges non-overlapping edits without a conflict copy", async () => {
+		const remote = new InMemoryRemote(); const vault = new InMemoryVault(); const manifest = new SyncManifest(); const cache = await makeCache();
+		vault.seed("note.md", "a\nb\nc\nd\n", 1); await runSyncPass(makeCtx(vault, remote, manifest, "a", cache));
+		expect(new TextDecoder().decode((await cache.get("note.md"))!)).toBe("a\nb\nc\nd\n");
+		await remote.seed("note.md", "a\nb\nC\nd\n", new Date(2_000_000).toISOString()); vault.seed("note.md", "A\nb\nc\nd\n", 3);
+		await runSyncPass(makeCtx(vault, remote, manifest, "a", cache));
+		expect(vault.readText("note.md")).toBe("A\nb\nC\nd\n"); expect(vault.allPaths()).toEqual(["note.md"]); expect(remote.readText("note.md")).toBe("A\nb\nC\nd\n");
+		expect(new TextDecoder().decode((await cache.get("note.md"))!)).toBe("A\nb\nC\nd\n");
+	});
+
+	it("preserves overlapping edits and missing/binary bases", async () => {
+		for (const [base, local, remoteText] of [["a\n", "L\n", "R\n"], ["base", "local", "remote"]]) {
+			const remote = new InMemoryRemote(); const vault = new InMemoryVault(); const manifest = new SyncManifest(); const cache = await makeCache();
+			vault.seed("note.md", base, 1); await runSyncPass(makeCtx(vault, remote, manifest, "a", cache)); vault.seed("note.md", local, 2); await remote.seed("note.md", remoteText, new Date(2_000_000).toISOString());
+			await runSyncPass(makeCtx(vault, remote, manifest, "a", cache)); expect(vault.allPaths().some((p) => p.includes("conflicted copy"))).toBe(true);
+		}
+		const remote = new InMemoryRemote(); const vault = new InMemoryVault(); const manifest = new SyncManifest(); const cache = await makeCache();
+		vault.seed("bin.md", "base", 1); await runSyncPass(makeCtx(vault, remote, manifest, "a", cache)); vault.seed("bin.md", "local", 2); await remote.seed("bin.md", "remote", new Date(2_000_000).toISOString()); await cache.set("bin.md", new Uint8Array([255, 0]));
+		await runSyncPass(makeCtx(vault, remote, manifest, "a", cache)); expect(vault.allPaths().some((p) => p.includes("conflicted copy"))).toBe(true);
+	});
+
+	it("falls back when the base is missing or current text is oversized", async () => {
+		const remote = new InMemoryRemote(); const vault = new InMemoryVault(); const manifest = new SyncManifest(); const cache = await makeCache();
+		vault.seed("note.md", "base", 1); await runSyncPass(makeCtx(vault, remote, manifest, "a")); vault.seed("note.md", "local", 2); await remote.seed("note.md", "remote", new Date(2_000_000).toISOString());
+		await runSyncPass(makeCtx(vault, remote, manifest, "a", cache)); expect(vault.allPaths().some((p) => p.includes("conflicted copy"))).toBe(true);
+		const big = Array.from({ length: 40000 }, (_, i) => `line-${i}`).join("\n") + "\n"; const remote2 = new InMemoryRemote(); const vault2 = new InMemoryVault(); const manifest2 = new SyncManifest(); const cache2 = await makeCache();
+		vault2.seed("big.md", big, 1); await runSyncPass(makeCtx(vault2, remote2, manifest2, "a", cache2)); vault2.seed("big.md", big + "l", 2); await remote2.seed("big.md", big + "r", new Date(2_000_000).toISOString());
+		await runSyncPass(makeCtx(vault2, remote2, manifest2, "a", cache2)); expect(vault2.allPaths().some((p) => p.includes("conflicted copy"))).toBe(true);
+	});
+
+	it("refreshes and removes cache entries across download and deletion", async () => {
+		const remote = new InMemoryRemote(); const vault = new InMemoryVault(); const manifest = new SyncManifest(); const cache = await makeCache();
+		await remote.seed("note.md", "remote", new Date().toISOString()); await runSyncPass(makeCtx(vault, remote, manifest, "a", cache));
+		expect(new TextDecoder().decode((await cache.get("note.md"))!)).toBe("remote");
+		await vault.deleteFile("note.md"); await runSyncPass(makeCtx(vault, remote, manifest, "a", cache));
+		expect(await cache.get("note.md")).toBeUndefined();
+	});
+	it("falls back for malformed current-side UTF-8", async () => {
+		const remote = new InMemoryRemote(); const vault = new InMemoryVault(); const manifest = new SyncManifest(); const cache = await makeCache();
+		vault.seed("bad.md", "base", 1); await runSyncPass(makeCtx(vault, remote, manifest, "a", cache));
+		await vault.writeFile("bad.md", new Uint8Array([0xff, 0x00]), 2); await remote.seed("bad.md", "remote edit", new Date(2_000_000).toISOString());
+		await runSyncPass(makeCtx(vault, remote, manifest, "a", cache)); expect(vault.allPaths().some((p) => p.includes("conflicted copy"))).toBe(true);
+	});
+
+	it("preserves both edits when merged conditional write races", async () => {
+		const remote = new InMemoryRemote(); const vault = new InMemoryVault(); const manifest = new SyncManifest(); const cache = await makeCache();
+		vault.seed("note.md", "a\nb\n", 1); await runSyncPass(makeCtx(vault, remote, manifest, "a", cache)); vault.seed("note.md", "A\nb\n", 2);
+		await remote.seed("note.md", "a\nB\n", new Date(2_000_000).toISOString()); vault.seed("note.md", "A\nb\n", 3);
+		const racing: RemoteAdapter = { list: () => remote.list(), get: (p) => remote.get(p), delete: (p, e) => remote.delete(p, e), put: async () => { throw new PreconditionFailedError(); } };
+		await runSyncPass(makeCtx(vault, racing, manifest, "a", cache)); expect(vault.allPaths().some((p) => p.includes("conflicted copy"))).toBe(true);
+	});
+});
 
 describe("offline divergence on both sides", () => {
 	it("preserves both versions as canonical + conflict-copy, no data loss", async () => {

@@ -25,6 +25,8 @@ function isEligible(path: string, bytes?: Uint8Array): boolean {
 	const lower = normalizePath(path).toLowerCase();
 	return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mdx") || lower.endsWith(".txt");
 }
+export const isBaseCacheEligiblePath = (path: string): boolean => isEligible(path);
+export const isBaseCacheEligibleBytes = (path: string, bytes: Uint8Array): boolean => isEligible(path, bytes);
 
 function encodeBase64(bytes: Uint8Array): string {
 	let binary = "";

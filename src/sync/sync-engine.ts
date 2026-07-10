@@ -5,6 +5,8 @@ import { SyncManifest } from "./manifest";
 import { LocalFileState, RemoteFileState, SyncPlanEntry } from "./types";
 import { PreconditionFailedError } from "../store/s3-client";
 import { sha256Hex } from "../util/hash";
+import { BaseContentCache, isBaseCacheEligibleBytes } from "./base-cache";
+import { mergeText } from "./text-merge";
 
 export interface SyncEngineContext {
 	vault: VaultAdapter;
@@ -15,6 +17,7 @@ export interface SyncEngineContext {
 	/** Persist the manifest after every successful mutation, not just at pass end —
 	 * so a crash mid-pass doesn't lose progress already made (Spike 3 test case). */
 	persistManifest: () => Promise<void>;
+	baseCache?: BaseContentCache;
 	log?: (message: string) => void;
 }
 
@@ -87,6 +90,13 @@ export async function runSyncPass(ctx: SyncEngineContext): Promise<SyncPassResul
 	for (const entry of plan) {
 		if (entry.action === "noop") {
 			if (reconcileNoopManifest(ctx.manifest, entry)) await ctx.persistManifest();
+			if (entry.local && entry.remote && ctx.baseCache) {
+				try {
+					await ctx.baseCache.set(entry.path, await ctx.vault.readFile(entry.path));
+				} catch {
+					// Cache refresh is best-effort and must not fail a sync pass.
+				}
+			}
 			continue;
 		}
 
@@ -188,6 +198,7 @@ async function applyUploadLocal(ctx: SyncEngineContext, entry: SyncPlanEntry): P
 		remoteEtag: etag,
 		lastSyncedHash: contentHash,
 	});
+	await ctx.baseCache?.set(entry.path, bytes);
 }
 
 async function applyDownloadRemote(ctx: SyncEngineContext, entry: SyncPlanEntry): Promise<void> {
@@ -207,15 +218,59 @@ async function applyDownloadRemote(ctx: SyncEngineContext, entry: SyncPlanEntry)
 		remoteEtag: result.etag,
 		lastSyncedHash: result.contentHash,
 	});
+	await ctx.baseCache?.set(entry.path, result.plaintext);
 }
 
 async function applyConflict(ctx: SyncEngineContext, entry: SyncPlanEntry): Promise<void> {
-	const resolution = resolveConflict(entry, ctx.deviceName);
 	const remoteResult = await ctx.remote.get(entry.path);
+	const localBytes = await ctx.vault.readFile(entry.path);
 
+	// Attempt a diff3 merge only with an authenticated, cached text base and
+	// decodable text on both current sides. Any ambiguity falls through to the
+	// lossless conflict-copy behavior below.
+	const baseBytes = await ctx.baseCache?.get(entry.path);
+	if (baseBytes && isBaseCacheEligibleBytes(entry.path, localBytes) && isBaseCacheEligibleBytes(entry.path, remoteResult.plaintext)) {
+		let base: string;
+		let local: string;
+		let remote: string;
+		try {
+			const decoder = new TextDecoder("utf-8", { fatal: true });
+			base = decoder.decode(baseBytes);
+			local = decoder.decode(localBytes);
+			remote = decoder.decode(remoteResult.plaintext);
+		} catch {
+			// Unsupported/binary or malformed UTF-8 content uses preservation.
+			base = local = remote = "";
+		}
+		if (base || local || remote || (baseBytes.byteLength === 0 && localBytes.byteLength === 0 && remoteResult.plaintext.byteLength === 0)) {
+			const merged = mergeText(base, local, remote);
+			if (merged.status === "merged") {
+				const mergedBytes = new TextEncoder().encode(merged.text);
+				try {
+					const { etag } = await ctx.remote.put(entry.path, mergedBytes, { ifMatch: remoteResult.etag });
+					await ctx.vault.writeFile(entry.path, mergedBytes);
+					const stat = await ctx.vault.stat(entry.path);
+					const contentHash = await ctx.hashFn(mergedBytes);
+					ctx.manifest.set({ path: entry.path, contentHash, mtime: stat.mtime, size: stat.size, remoteEtag: etag, lastSyncedHash: contentHash });
+					await ctx.baseCache?.set(entry.path, mergedBytes);
+					return;
+				} catch (error) {
+					if (!(error instanceof PreconditionFailedError)) throw error;
+					const latest = await ctx.remote.get(entry.path);
+					await preserveConflict(ctx, entry, localBytes, latest);
+					return;
+				}
+			}
+		}
+	}
+
+	await preserveConflict(ctx, entry, localBytes, remoteResult);
+}
+
+async function preserveConflict(ctx: SyncEngineContext, entry: SyncPlanEntry, localBytes: Uint8Array, remoteResult: { plaintext: Uint8Array; etag: string; contentHash: string }): Promise<void> {
+	const resolution = resolveConflict(entry, ctx.deviceName);
 	// The remote object remains canonical. Preserve the local divergent content
 	// at a collision-proof path, then replace the local original with remote's.
-	const localBytes = await ctx.vault.readFile(entry.path);
 	const copy = await allocateConflictCopy(ctx, resolution.conflictCopyPath, localBytes);
 	if (!copy.reused) await ctx.vault.writeFile(copy.path, localBytes);
 	await ctx.vault.writeFile(entry.path, remoteResult.plaintext);
@@ -231,6 +286,7 @@ async function applyConflict(ctx: SyncEngineContext, entry: SyncPlanEntry): Prom
 		remoteEtag: remoteResult.etag,
 		lastSyncedHash: remoteResult.contentHash,
 	});
+	await ctx.baseCache?.set(entry.path, remoteResult.plaintext);
 
 	// The conflict-copy file is intentionally left untracked in the manifest:
 	// the next sync pass will see it as a brand-new local file and upload it,
@@ -273,6 +329,7 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 async function applyDeleteLocal(ctx: SyncEngineContext, entry: SyncPlanEntry): Promise<void> {
 	await ctx.vault.deleteFile(entry.path);
 	ctx.manifest.delete(entry.path);
+	ctx.baseCache?.delete(entry.path);
 }
 
 async function applyDeleteRemote(ctx: SyncEngineContext, entry: SyncPlanEntry): Promise<void> {
@@ -280,4 +337,5 @@ async function applyDeleteRemote(ctx: SyncEngineContext, entry: SyncPlanEntry): 
 	// remote etag, not a potentially stale/corrupted cached manifest value.
 	await ctx.remote.delete(entry.path, entry.remote?.etag);
 	ctx.manifest.delete(entry.path);
+	ctx.baseCache?.delete(entry.path);
 }
