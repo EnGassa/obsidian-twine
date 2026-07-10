@@ -1,7 +1,7 @@
 type Diff3Segment = { ok: string[] } | { conflict: unknown };
 
 // diff3@0.0.4 predates bundled TypeScript declarations.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- diff3 lacks TypeScript declarations and ESM exports
 const diff3Merge = require("diff3") as (local: string[], base: string[], remote: string[]) => Diff3Segment[];
 
 export type TextMergeResult = { status: "merged"; text: string } | { status: "conflict" };

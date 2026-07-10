@@ -57,7 +57,7 @@ export class BaseContentCache {
 		return new BaseContentCache(contentKey, serialized);
 	}
 
-	constructor(private readonly contentKey: CryptoKey, serialized?: SerializedBaseCache | string | unknown) {
+	constructor(private readonly contentKey: CryptoKey, serialized?: unknown) {
 		if (typeof serialized === "string") {
 			try {
 				serialized = JSON.parse(serialized) as unknown;
