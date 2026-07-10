@@ -66,3 +66,19 @@ jobs:
             main.js manifest.json \
             --title "${{ steps.manifest.outputs.version }}" \
             --notes "Automated release for version ${{ steps.manifest.outputs.version }}. See the commit history for details."
+
+      - name: Trigger Obsidian Community Release Check
+        if: steps.check.outputs.exists == 'false'
+        env:
+          OBS_TOKEN: ${{ secrets.OBS_TOKEN }}
+        run: |
+          if [ -n "$OBS_TOKEN" ]; then
+            echo "Triggering Obsidian Community release check..."
+            curl -s -o /dev/null -w "HTTP %{http_code}\n" \
+              -b "obs_token=$OBS_TOKEN" \
+              -H "Referer: https://community.obsidian.md/account/plugins/twine" \
+              -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" \
+              https://community.obsidian.md/account/plugins/twine/check-release
+          else
+            echo "OBS_TOKEN secret is not set. Skipping release check trigger."
+          fi
