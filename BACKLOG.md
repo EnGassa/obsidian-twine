@@ -18,7 +18,7 @@ their implementation history and rationale remain available in Git.
 
 ---
 
-## 1. Make conflict preservation collision-proof
+## 1. Make conflict preservation collision-proof — DONE
 
 **Priority:** P0. Complete this before adding automatic merging.
 
@@ -62,6 +62,11 @@ events and cannot reliably establish which edit is newer.
   identical timestamps, and deterministic behavior with skewed clocks.
 - Randomized multi-device convergence remains green with a stronger assertion
   that every distinct non-deleted write survives somewhere.
+
+**Implemented:** Conflict copies now include millisecond timestamps and a
+losing-content hash, allocate around occupied paths without overwriting them,
+reuse identical copies, and keep the remote object canonical. Regression tests
+cover repeated conflicts, skewed clocks, dotfiles, and randomized convergence.
 
 ---
 

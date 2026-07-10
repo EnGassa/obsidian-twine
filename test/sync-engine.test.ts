@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SyncManifest } from "../src/sync/manifest";
 import { runSyncPass, SyncEngineContext } from "../src/sync/sync-engine";
 import { sha256Hex } from "../src/util/hash";
@@ -56,6 +56,60 @@ describe("offline divergence on both sides", () => {
 		// Exactly one conflict-copy file was created (the loser), alongside the canonical note.md.
 		const conflictCopies = vaultB.allPaths().filter((p) => p.includes("conflicted copy"));
 		expect(conflictCopies).toHaveLength(1);
+	});
+
+	it("preserves repeated conflicts without overwriting or duplicating copies", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-07-10T12:34:56.789Z"));
+
+		try {
+			const remote = new InMemoryRemote();
+			const vault = new InMemoryVault();
+			const manifest = new SyncManifest();
+
+			vault.seed("note.md", "base", 1);
+			await runSyncPass(makeCtx(vault, remote, manifest, "device-a"));
+
+			const localOneHash = await sha256Hex(new TextEncoder().encode("local-one"));
+			const occupiedCandidate =
+				`note (conflicted copy device-a 2026-07-10 123456.789 ${localOneHash.slice(0, 8)}).md`;
+			vault.seed(occupiedCandidate, "unrelated existing content", 2);
+
+			await remote.seed("note.md", "remote-one", new Date(2_000_000).toISOString());
+			vault.seed("note.md", "local-one", 3_000_000);
+			await runSyncPass(makeCtx(vault, remote, manifest, "device-a"));
+
+			const firstCopies = vault.allPaths().filter((path) => path.includes("conflicted copy"));
+			expect(firstCopies).toHaveLength(2);
+			expect(vault.readText(occupiedCandidate)).toBe("unrelated existing content");
+			expect(firstCopies.map((path) => vault.readText(path))).toEqual(
+				expect.arrayContaining(["unrelated existing content", "local-one"])
+			);
+
+			// Repeating the same losing content must reuse the first copy.
+			await remote.seed("note.md", "remote-two", new Date(4_000_000).toISOString());
+			vault.seed("note.md", "local-one", 5_000_000);
+			await runSyncPass(makeCtx(vault, remote, manifest, "device-a"));
+
+			const duplicateCopies = vault.allPaths().filter((path) => path.includes("conflicted copy"));
+			expect(duplicateCopies).toHaveLength(2);
+			expect(duplicateCopies.map((path) => vault.readText(path))).toEqual(
+				expect.arrayContaining(["unrelated existing content", "local-one"])
+			);
+
+			// A distinct losing edit at the same timestamp needs its own path.
+			await remote.seed("note.md", "remote-three", new Date(6_000_000).toISOString());
+			vault.seed("note.md", "local-two", 7_000_000);
+			await runSyncPass(makeCtx(vault, remote, manifest, "device-a"));
+
+			const allCopies = vault.allPaths().filter((path) => path.includes("conflicted copy"));
+			expect(allCopies).toHaveLength(3);
+			expect(allCopies.map((path) => vault.readText(path))).toEqual(
+				expect.arrayContaining(["unrelated existing content", "local-one", "local-two"])
+			);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 
@@ -286,8 +340,8 @@ describe("mtime bookkeeping after a download (BACKLOG.md #8)", () => {
 	});
 });
 
-describe("conflict resolves in favor of local (previously untested branch)", () => {
-	it("pushes local content as canonical and preserves remote's divergent content as a conflict-copy", async () => {
+describe("conflict keeps the remote version canonical", () => {
+	it("preserves local content as a conflict-copy without changing the remote object", async () => {
 		const remote = new InMemoryRemote();
 
 		const vaultA = new InMemoryVault();
@@ -306,26 +360,24 @@ describe("conflict resolves in favor of local (previously untested branch)", () 
 		await runSyncPass(makeCtx(vaultB, remote, manifestB, "device-b"));
 
 		// A edits offline with a local mtime deliberately far in the future of
-		// anything InMemoryRemote's clock will produce, so resolveConflict()
-		// picks "local" as the winner — the branch every other conflict test in
-		// this file happens not to exercise, since InMemoryRemote's clock
-		// otherwise dwarfs InMemoryVault's by default.
+		// anything InMemoryRemote's clock will produce. The remote object remains
+		// canonical because filesystem and server upload times are incomparable.
 		vaultA.seed("note.md", "edited by A", 999_999_999_999);
 		const result = await runSyncPass(makeCtx(vaultA, remote, manifestA, "device-a"));
 		expect(result.errors).toHaveLength(0);
 
-		// A's content is canonical at the original path...
-		expect(vaultA.readText("note.md")).toBe("edited by A");
-		expect(remote.readText("note.md")).toBe("edited by A");
+		// B's content remains canonical at the original path...
+		expect(vaultA.readText("note.md")).toBe("edited by B");
+		expect(remote.readText("note.md")).toBe("edited by B");
 
-		// ...and B's content survives as a conflict-copy, not discarded.
+		// ...and A's content survives as a conflict-copy, not discarded.
 		const conflictCopyPaths = vaultA.allPaths().filter((p) => p.includes("conflicted copy"));
 		expect(conflictCopyPaths).toHaveLength(1);
-		expect(vaultA.readText(conflictCopyPaths[0])).toBe("edited by B");
+		expect(vaultA.readText(conflictCopyPaths[0])).toBe("edited by A");
 
-		// Manifest reflects local's content as the freshly-synced state.
+		// Manifest reflects remote's content as the freshly-synced state.
 		const entry = manifestA.get("note.md");
 		expect(entry?.lastSyncedHash).toBeDefined();
-		expect(entry?.mtime).toBe(999_999_999_999);
+		expect(entry?.mtime).toBe((await vaultA.stat("note.md")).mtime);
 	});
 });

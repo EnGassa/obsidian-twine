@@ -213,47 +213,61 @@ async function applyConflict(ctx: SyncEngineContext, entry: SyncPlanEntry): Prom
 	const resolution = resolveConflict(entry, ctx.deviceName);
 	const remoteResult = await ctx.remote.get(entry.path);
 
-	if (resolution.winner === "local") {
-		// Local content becomes canonical: push it to remote, and preserve the
-		// remote's divergent content as a conflict-copy file so nothing is lost.
-		await ctx.vault.writeFile(resolution.conflictCopyPath, remoteResult.plaintext);
+	// The remote object remains canonical. Preserve the local divergent content
+	// at a collision-proof path, then replace the local original with remote's.
+	const localBytes = await ctx.vault.readFile(entry.path);
+	const copy = await allocateConflictCopy(ctx, resolution.conflictCopyPath, localBytes);
+	if (!copy.reused) await ctx.vault.writeFile(copy.path, localBytes);
+	await ctx.vault.writeFile(entry.path, remoteResult.plaintext);
+	// Real mtime the vault just assigned — see applyDownloadRemote's comment
+	// and BACKLOG.md #8.
+	const stat = await ctx.vault.stat(entry.path);
 
-		const localBytes = await ctx.vault.readFile(entry.path);
-		const { etag } = await ctx.remote.put(entry.path, localBytes, {
-			ifMatch: entry.remote!.etag,
-		});
-
-		ctx.manifest.set({
-			path: entry.path,
-			contentHash: entry.local!.contentHash,
-			mtime: entry.local!.mtime,
-			size: entry.local!.size,
-			remoteEtag: etag,
-			lastSyncedHash: entry.local!.contentHash,
-		});
-	} else {
-		// Remote content becomes canonical: preserve the local divergent content
-		// as a conflict-copy file, then overwrite the canonical path with remote's.
-		const localBytes = await ctx.vault.readFile(entry.path);
-		await ctx.vault.writeFile(resolution.conflictCopyPath, localBytes);
-		await ctx.vault.writeFile(entry.path, remoteResult.plaintext);
-		// Real mtime the vault just assigned — see applyDownloadRemote's comment
-		// and BACKLOG.md #8.
-		const stat = await ctx.vault.stat(entry.path);
-
-		ctx.manifest.set({
-			path: entry.path,
-			contentHash: remoteResult.contentHash,
-			mtime: stat.mtime,
-			size: stat.size,
-			remoteEtag: remoteResult.etag,
-			lastSyncedHash: remoteResult.contentHash,
-		});
-	}
+	ctx.manifest.set({
+		path: entry.path,
+		contentHash: remoteResult.contentHash,
+		mtime: stat.mtime,
+		size: stat.size,
+		remoteEtag: remoteResult.etag,
+		lastSyncedHash: remoteResult.contentHash,
+	});
 
 	// The conflict-copy file is intentionally left untracked in the manifest:
 	// the next sync pass will see it as a brand-new local file and upload it,
 	// no special-casing needed.
+}
+
+async function allocateConflictCopy(
+	ctx: SyncEngineContext,
+	basePath: string,
+	content: Uint8Array
+): Promise<{ path: string; reused: boolean }> {
+	const occupied = new Set((await ctx.vault.listFiles()).map((file) => file.path));
+
+	for (let suffix = 1; suffix <= 10_000; suffix++) {
+		const candidate = suffix === 1 ? basePath : appendNumericSuffix(basePath, suffix);
+		if (!occupied.has(candidate)) return { path: candidate, reused: false };
+
+		const existing = await ctx.vault.readFile(candidate);
+		if (bytesEqual(existing, content)) return { path: candidate, reused: true };
+	}
+
+	throw new Error(`Unable to allocate a unique conflict-copy path for ${basePath}`);
+}
+
+function appendNumericSuffix(path: string, suffix: number): string {
+	const lastDot = path.lastIndexOf(".");
+	const lastSlash = path.lastIndexOf("/");
+	if (lastDot > lastSlash + 1) return `${path.slice(0, lastDot)} ${suffix}${path.slice(lastDot)}`;
+	return `${path} ${suffix}`;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.byteLength !== b.byteLength) return false;
+	for (let i = 0; i < a.byteLength; i++) {
+		if (a[i] !== b[i]) return false;
+	}
+	return true;
 }
 
 async function applyDeleteLocal(ctx: SyncEngineContext, entry: SyncPlanEntry): Promise<void> {

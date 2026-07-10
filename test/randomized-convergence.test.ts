@@ -239,17 +239,25 @@ describe("randomized convergence never silently loses content", () => {
 			if (!anyActed) break;
 		}
 
-		// For every canonical (non-conflict-copy) path that survived, its final
-		// content must be something that was genuinely written to that path at
-		// some point — never fabricated/corrupted content.
-		for (const path of devices[0].vault.allPaths()) {
-			if (path.includes("conflicted copy")) continue; // derived from a base path's history, checked implicitly
-			const finalContent = devices[0].vault.readText(path);
-			const validContents = everWritten.get(path);
-			expect(
-				validContents?.has(finalContent),
-				`final content of ${path} ("${finalContent}") was never actually written to that path`
-			).toBe(true);
+		// Every final file, including conflict copies, must contain bytes that were
+		// genuinely written during the scenario — never fabricated or mixed content.
+		for (const device of devices) {
+			for (const path of device.vault.allPaths()) {
+				const basePath = path
+					.replace(/ \(conflicted copy [^)]+\)(?=\.[^/]+$)/, "")
+					.replace(/ \(conflicted copy [^)]+\)$/, "");
+				const finalContent = device.vault.readText(path);
+				const validContents = everWritten.get(basePath) ?? everWritten.get(path);
+				expect(
+					validContents?.has(finalContent),
+					`${device.name}: final content of ${path} ("${finalContent}") was never actually written`
+				).toBe(true);
+			}
+		}
+
+		for (const device of devices) {
+			const conflictPaths = device.vault.allPaths().filter((path) => path.includes("conflicted copy"));
+			expect(new Set(conflictPaths).size).toBe(conflictPaths.length);
 		}
 	});
 });

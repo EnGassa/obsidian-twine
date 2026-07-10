@@ -29,7 +29,7 @@ describe("resolveConflict", () => {
 		expect(() => resolveConflict(entry, "device-a")).toThrow();
 	});
 
-	it("picks local as winner when local mtime is later than remote's LastModified", () => {
+	it("keeps remote canonical when local mtime is later than remote's LastModified", () => {
 		const entry = conflictEntry({
 			local: { path: "note.md", contentHash: "a", mtime: 2000, size: 1 },
 			remote: {
@@ -39,10 +39,10 @@ describe("resolveConflict", () => {
 				lastModified: new Date(1000).toISOString(),
 			},
 		});
-		expect(resolveConflict(entry, "device-a").winner).toBe("local");
+		expect(resolveConflict(entry, "device-a").winner).toBe("remote");
 	});
 
-	it("picks remote as winner when remote's LastModified is later than local mtime", () => {
+	it("keeps remote canonical when remote's LastModified is later than local mtime", () => {
 		const entry = conflictEntry({
 			local: { path: "note.md", contentHash: "a", mtime: 1000, size: 1 },
 			remote: {
@@ -55,7 +55,7 @@ describe("resolveConflict", () => {
 		expect(resolveConflict(entry, "device-a").winner).toBe("remote");
 	});
 
-	it("picks remote as winner on an exact tie (>, not >=)", () => {
+	it("keeps remote canonical on an exact tie", () => {
 		const entry = conflictEntry({
 			local: { path: "note.md", contentHash: "a", mtime: 1000, size: 1 },
 			remote: {
@@ -69,41 +69,38 @@ describe("resolveConflict", () => {
 	});
 
 	describe("conflict-copy filename", () => {
-		const when = new Date("2026-07-10T12:34:56.000Z");
+		const when = new Date("2026-07-10T12:34:56.789Z");
 
 		it("preserves the extension and inserts the marker before it", () => {
 			const entry = conflictEntry({ path: "folder/note.md" });
 			const { conflictCopyPath } = resolveConflict(entry, "laptop", when);
-			expect(conflictCopyPath).toBe("folder/note (conflicted copy laptop 2026-07-10 123456.0).md");
+		expect(conflictCopyPath).toBe("folder/note (conflicted copy laptop 2026-07-10 123456.789 a).md");
 		});
 
 		it("handles a path with no extension", () => {
 			const entry = conflictEntry({ path: "folder/README" });
 			const { conflictCopyPath } = resolveConflict(entry, "laptop", when);
-			expect(conflictCopyPath).toBe("folder/README (conflicted copy laptop 2026-07-10 123456.0)");
+		expect(conflictCopyPath).toBe("folder/README (conflicted copy laptop 2026-07-10 123456.789 a)");
 		});
 
 		it("doesn't mistake a dot in a folder name for a file extension", () => {
 			const entry = conflictEntry({ path: "my.folder/README" });
 			const { conflictCopyPath } = resolveConflict(entry, "laptop", when);
-			expect(conflictCopyPath).toBe("my.folder/README (conflicted copy laptop 2026-07-10 123456.0)");
+		expect(conflictCopyPath).toBe("my.folder/README (conflicted copy laptop 2026-07-10 123456.789 a)");
 		});
 
 		it("sanitizes filesystem-illegal characters out of the device name", () => {
 			const entry = conflictEntry({ path: "note.md" });
 			const { conflictCopyPath } = resolveConflict(entry, 'phone: "work"/*?', when);
-			expect(conflictCopyPath).toBe("note (conflicted copy phone- -work---- 2026-07-10 123456.0).md");
+		expect(conflictCopyPath).toBe("note (conflicted copy phone- -work---- 2026-07-10 123456.789 a).md");
 			// No raw illegal characters leaked through from the device name.
 			expect(conflictCopyPath).not.toMatch(/["*?<>|]/);
 		});
 
-		it("handles a bare root-level filename with a dotfile-style extension", () => {
+		it("handles a bare root-level dotfile without treating the leading dot as an extension", () => {
 			const entry = conflictEntry({ path: ".gitignore" });
 			const { conflictCopyPath } = resolveConflict(entry, "laptop", when);
-			// lastDot === 0 is not > lastIndexOf("/") === -1, so this DOES count
-			// as having an "extension" of the whole name after the dot — document
-			// the actual (slightly odd but harmless) behavior rather than assume it.
-			expect(conflictCopyPath).toBe(" (conflicted copy laptop 2026-07-10 123456.0).gitignore");
+			expect(conflictCopyPath).toBe(".gitignore (conflicted copy laptop 2026-07-10 123456.789 a)");
 		});
 	});
 });
