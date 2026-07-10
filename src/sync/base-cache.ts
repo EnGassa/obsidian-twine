@@ -36,6 +36,7 @@ function decodeBase64(value: unknown): Uint8Array {
 	if (typeof value !== "string" || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
 		throw new Error("Invalid cache ciphertext");
 	}
+	if (value.length > 4 * Math.ceil(BASE_CACHE_TOTAL_LIMIT / 3)) throw new Error("Cache ciphertext too large");
 	const binary = atob(value);
 	const bytes = new Uint8Array(binary.length);
 	for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -69,15 +70,16 @@ export class BaseContentCache {
 				if (!isEligible(path) || !isRecord(rawEntry)) continue;
 				const ciphertext = decodeBase64(rawEntry.ciphertext);
 				const access = rawEntry.access;
-				if (!(typeof access === "number" && Number.isSafeInteger(access) && access > 0) || ciphertext.length === 0) continue;
+				if (ciphertext.length > BASE_CACHE_TOTAL_LIMIT || !(typeof access === "number" && Number.isSafeInteger(access) && access > 0) || ciphertext.length === 0) continue;
 				this.entries.set(path, { ciphertext, access });
-				this.nextAccess = Math.max(this.nextAccess, access + 1);
+				this.nextAccess = Math.max(this.nextAccess, access >= Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : access + 1);
 			} catch {
 				// Ignore only the malformed record; other entries remain usable.
 			}
 		}
-		if (typeof serialized.nextAccess === "number" && Number.isSafeInteger(serialized.nextAccess)) {
-			this.nextAccess = Math.max(this.nextAccess, serialized.nextAccess);
+		if (typeof serialized.nextAccess === "number" && Number.isFinite(serialized.nextAccess)) {
+			const nextAccess = Math.min(Math.max(1, Math.floor(serialized.nextAccess)), Number.MAX_SAFE_INTEGER);
+			this.nextAccess = Math.max(this.nextAccess, nextAccess);
 		}
 		this.evict();
 	}
@@ -90,7 +92,7 @@ export class BaseContentCache {
 		try {
 			const bytes = await decryptContentBlob(this.contentKey, entry.ciphertext, normalized);
 			if (bytes.byteLength > BASE_CACHE_ENTRY_LIMIT) throw new Error("Invalid cache size");
-			entry.access = this.nextAccess++;
+			entry.access = this.allocateAccess();
 			return bytes;
 		} catch {
 			this.entries.delete(normalized);
@@ -105,7 +107,7 @@ export class BaseContentCache {
 		try {
 			const ciphertext = await encryptContentBlob(this.contentKey, bytes, normalized);
 			if (ciphertext.byteLength > BASE_CACHE_TOTAL_LIMIT) return;
-			this.entries.set(normalized, { ciphertext, access: this.nextAccess++ });
+			this.entries.set(normalized, { ciphertext, access: this.allocateAccess() });
 			this.evict();
 		} catch {
 			// A failed encryption must not leave stale plaintext or metadata behind.
@@ -141,5 +143,14 @@ export class BaseContentCache {
 			this.entries.delete(oldestPath);
 			total -= removed?.ciphertext.byteLength ?? 0;
 		}
+	}
+
+	private allocateAccess(): number {
+		if (this.nextAccess >= Number.MAX_SAFE_INTEGER) {
+			const ordered = [...this.entries.values()].sort((a, b) => a.access - b.access);
+			ordered.forEach((entry, index) => (entry.access = index + 1));
+			this.nextAccess = ordered.length + 1;
+		}
+		return this.nextAccess++;
 	}
 }
