@@ -7,6 +7,9 @@ export class Plugin {
 	addStatusBarItem = vi.fn(() => ({ setText: vi.fn() }));
 	addRibbonIcon = vi.fn();
 	addCommand = vi.fn();
+	registerEvent = vi.fn();
+	registerInterval = vi.fn();
+	register = vi.fn();
 }
 
 export class Notice {}
@@ -34,3 +37,15 @@ export class Vault {}
 export class TFile {}
 
 export const requestUrl = vi.fn();
+
+export interface PluginManifest {
+	id: string;
+	name: string;
+	version: string;
+	minAppVersion: string;
+	description: string;
+	author: string;
+	authorUrl?: string;
+	isDesktopOnly?: boolean;
+}
+

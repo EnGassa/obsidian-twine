@@ -19,6 +19,7 @@ interface PluginData {
 	manifest: unknown;
 	remoteMetaCache: unknown;
 	baseCache?: SerializedBaseCache;
+	baseCacheTarget?: string;
 }
 
 export default class TwinePlugin extends Plugin {
@@ -30,7 +31,9 @@ export default class TwinePlugin extends Plugin {
 	private remoteMetaCache!: RemoteMetaCache;
 	private queue?: SyncQueue;
 	private baseCache?: BaseContentCache;
+	private baseCacheTarget?: string;
 	private persistedBaseCache?: SerializedBaseCache;
+	private persistedBaseCacheTarget?: string;
 	private statusBarItem?: HTMLElement;
 	/** Cached to avoid re-running PBKDF2 (600k iterations, twice) on every
 	 * sync pass. Invalidated whenever the input it was derived from changes —
@@ -38,8 +41,8 @@ export default class TwinePlugin extends Plugin {
 	 * derivation, or an imported recovery-key string used verbatim (no PBKDF2
 	 * needed — a recovery key already IS raw key material). */
 	private cachedKeys?:
-		| { source: "passphrase"; passphrase: string; salt: string; keys: DerivedKeys }
-		| { source: "recovery"; recoveryKey: string; keys: DerivedKeys };
+		| { source: "passphrase"; passphrase: string; salt: string; target: string; keys: DerivedKeys }
+		| { source: "recovery"; recoveryKey: string; target: string; keys: DerivedKeys };
 
 	async onload(): Promise<void> {
 		await this.loadSettingsAndManifest();
@@ -73,14 +76,31 @@ export default class TwinePlugin extends Plugin {
 		this.syncManifest = SyncManifest.fromJSON(data.manifest ?? []);
 		this.remoteMetaCache = RemoteMetaCache.fromJSON(data.remoteMetaCache);
 		this.persistedBaseCache = data.baseCache;
+		this.persistedBaseCacheTarget = data.baseCacheTarget;
+		const target = this.getCacheTarget();
+		if (this.persistedBaseCacheTarget !== target) {
+			this.persistedBaseCache = undefined;
+			this.persistedBaseCacheTarget = undefined;
+		}
 	}
 
 	private async persist(): Promise<void> {
+		const target = this.getCacheTarget();
+		if (this.baseCacheTarget && this.baseCacheTarget !== target) {
+			this.baseCache = undefined;
+			this.baseCacheTarget = undefined;
+			this.cachedKeys = undefined;
+		}
+		if (this.persistedBaseCacheTarget && this.persistedBaseCacheTarget !== target) {
+			this.persistedBaseCache = undefined;
+			this.persistedBaseCacheTarget = undefined;
+		}
 		const payload: PluginData = {
 			settings: this.settings,
 			manifest: this.syncManifest.toJSON(),
 			remoteMetaCache: this.remoteMetaCache.toJSON(),
 			baseCache: this.baseCache?.toJSON() ?? this.persistedBaseCache,
+			baseCacheTarget: this.baseCache ? target : this.persistedBaseCacheTarget,
 		};
 		await this.saveData(payload);
 	}
@@ -101,6 +121,11 @@ export default class TwinePlugin extends Plugin {
 			secretAccessKey: this.settings.secretAccessKey,
 			fetcher: obsidianFetcher,
 		};
+	}
+
+	private getCacheTarget(): string {
+		const s = this.settings;
+		return `${s.endpoint}|${s.region}|${s.bucket}`;
 	}
 
 	/**
@@ -147,22 +172,28 @@ export default class TwinePlugin extends Plugin {
 	 * fails fast with a clear error instead of a cryptic one deep in list().
 	 */
 	private async getKeys(): Promise<DerivedKeys> {
+		const target = this.getCacheTarget();
 		if (this.settings.importedRecoveryKey) {
 			const recoveryKey = this.settings.importedRecoveryKey;
-			if (this.cachedKeys?.source === "recovery" && this.cachedKeys.recoveryKey === recoveryKey) {
-				this.baseCache ??= BaseContentCache.fromJSON(this.cachedKeys.keys.contentKey, this.persistedBaseCache);
+			if (this.cachedKeys?.source === "recovery" && this.cachedKeys.recoveryKey === recoveryKey && this.cachedKeys.target === target) {
+				if (!this.baseCache) {
+					this.baseCache = BaseContentCache.fromJSON(this.cachedKeys.keys.contentKey, this.persistedBaseCache);
+					this.baseCacheTarget = target;
+				}
 				return this.cachedKeys.keys;
 			}
 
 			const keys = await importRecoveryKey(recoveryKey);
 			await verifyOrEstablishKeyCheck(this.getS3Config(), keys);
-			this.cachedKeys = { source: "recovery", recoveryKey, keys };
+			this.cachedKeys = { source: "recovery", recoveryKey, target, keys };
 			// A newly selected key source must never reuse entries encrypted for a
 			// previous source. On first load, persisted entries are attempted so a
 			// restart with the same key can recover them; authentication failures
 			// are treated as misses by BaseContentCache.
-			this.baseCache = BaseContentCache.fromJSON(keys.contentKey, this.persistedBaseCache);
+			this.baseCache = BaseContentCache.fromJSON(keys.contentKey, this.persistedBaseCacheTarget === target ? this.persistedBaseCache : undefined);
+			this.baseCacheTarget = target;
 			this.persistedBaseCache = undefined;
+			this.persistedBaseCacheTarget = undefined;
 			return keys;
 		}
 
@@ -172,17 +203,23 @@ export default class TwinePlugin extends Plugin {
 		if (
 			this.cachedKeys?.source === "passphrase" &&
 			this.cachedKeys.passphrase === passphrase &&
-			this.cachedKeys.salt === salt
+			this.cachedKeys.salt === salt &&
+			this.cachedKeys.target === target
 		) {
-			this.baseCache ??= BaseContentCache.fromJSON(this.cachedKeys.keys.contentKey, this.persistedBaseCache);
+			if (!this.baseCache) {
+				this.baseCache = BaseContentCache.fromJSON(this.cachedKeys.keys.contentKey, this.persistedBaseCache);
+				this.baseCacheTarget = target;
+			}
 			return this.cachedKeys.keys;
 		}
 
 		const keys = await deriveKeys(passphrase, salt);
 		await verifyOrEstablishKeyCheck(this.getS3Config(), keys);
-		this.cachedKeys = { source: "passphrase", passphrase, salt, keys };
-		this.baseCache = BaseContentCache.fromJSON(keys.contentKey, this.persistedBaseCache);
+		this.cachedKeys = { source: "passphrase", passphrase, salt, target, keys };
+		this.baseCache = BaseContentCache.fromJSON(keys.contentKey, this.persistedBaseCacheTarget === target ? this.persistedBaseCache : undefined);
+		this.baseCacheTarget = target;
 		this.persistedBaseCache = undefined;
+		this.persistedBaseCacheTarget = undefined;
 		return keys;
 	}
 

@@ -4,42 +4,6 @@ import TwinePlugin from "../main";
 import { SerializedBaseCache } from "../src/sync/base-cache";
 import { TwineSettings } from "../src/settings-schema";
 
-// Mock the obsidian module
-vi.mock("obsidian", () => {
-	return {
-		Plugin: class MockPlugin {
-			loadData = vi.fn();
-			saveData = vi.fn();
-			addSettingTab = vi.fn();
-			addStatusBarItem = vi.fn(() => ({ setText: vi.fn() }));
-			addRibbonIcon = vi.fn();
-			addCommand = vi.fn();
-			registerEvent = vi.fn();
-			registerInterval = vi.fn();
-			register = vi.fn();
-		},
-		Notice: class MockNotice {},
-		Platform: {
-			isMobile: false,
-		},
-		PluginSettingTab: class MockPluginSettingTab {
-			constructor(public app: unknown, public plugin: unknown) {}
-			display() {}
-		},
-		Setting: class MockSetting {
-			constructor(public containerEl: unknown) {}
-			setName = vi.fn().mockReturnThis();
-			setDesc = vi.fn().mockReturnThis();
-			addText = vi.fn().mockReturnThis();
-			addToggle = vi.fn().mockReturnThis();
-			addButton = vi.fn().mockReturnThis();
-		},
-		App: class MockApp {},
-		Vault: class MockVault {},
-		TFile: class MockTFile {},
-		requestUrl: vi.fn(),
-	};
-});
 
 describe("TwinePlugin target scoping", () => {
 	let plugin: TwinePlugin;
@@ -132,5 +96,9 @@ describe("TwinePlugin target scoping", () => {
 		const saved = (plugin.saveData as Mock).mock.calls[0][0];
 		expect(saved.baseCache).toBeUndefined();
 		expect(saved.baseCacheTarget).toBeUndefined();
+		expect(plugin["persistedBaseCache"]).toBeUndefined();
+		expect(plugin["persistedBaseCacheTarget"]).toBeUndefined();
+		expect(plugin["baseCache"]).toBeUndefined();
+		expect(plugin["baseCacheTarget"]).toBeUndefined();
 	});
 });
