@@ -70,7 +70,7 @@ cover repeated conflicts, skewed clocks, dotfiles, and randomized convergence.
 
 ---
 
-## 2. Add conservative three-way merging for text files
+## 2. Add conservative three-way merging for text files — DONE
 
 **Priority:** P1. Depends on item 1.
 
@@ -106,6 +106,13 @@ the common base content required for a correct three-way merge.
   blocks sync.
 - Tests cover frontmatter, Unicode, line-ending differences, empty files,
   large-file limits, offline edits on three devices, and cache eviction.
+
+**Implemented:** Three-way merging now uses an encrypted local base cache for
+`.md`, `.markdown`, `.mdx`, and `.txt` files up to 128 KiB each, with a 512 KiB
+aggregate LRU limit. Cache records stay in plugin data and are never uploaded
+to R2; malformed or key-mismatched entries become cache misses. Unsupported
+files, missing bases, overlapping edits, and conditional-write races retain
+the collision-proof conflict-copy fallback.
 
 ---
 

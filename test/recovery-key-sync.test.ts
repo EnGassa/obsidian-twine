@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deriveKeys, exportRecoveryKey, importRecoveryKey } from "../src/crypto/crypto";
+import { deriveKeys, exportRecoveryKey, importRecoveryKey, generateSaltBase64 } from "../src/crypto/crypto";
+import { BaseContentCache } from "../src/sync/base-cache";
 import { RemoteMetaCache } from "../src/store/remote-meta-cache";
 import { S3Config } from "../src/store/s3-client";
 import { S3RemoteAdapter } from "../src/store/s3-remote-adapter";
@@ -26,6 +27,19 @@ function makeConfig(bucket: FakeS3Bucket): S3Config {
  * around this, already covered by the project's typecheck.
  */
 describe("recovery key import enables full sync with no passphrase (BACKLOG.md #9)", () => {
+	it("persists encrypted base records across reload and treats a changed key as a cache miss", async () => {
+		const salt = generateSaltBase64();
+		const keys = await deriveKeys("cache-passphrase", salt);
+		const cache = new BaseContentCache(keys.contentKey);
+		await cache.set("note.md", new TextEncoder().encode("base text"));
+		const reloaded = BaseContentCache.fromJSON(keys.contentKey, cache.toJSON());
+		expect(new TextDecoder().decode((await reloaded.get("note.md"))!)).toBe("base text");
+
+		const changedKeys = await deriveKeys("different-passphrase", salt);
+		const changed = BaseContentCache.fromJSON(changedKeys.contentKey, cache.toJSON());
+		expect(await changed.get("note.md")).toBeUndefined();
+	});
+
 	it("device B, holding only device A's exported recovery key, can list/get/put against the bucket", async () => {
 		const bucket = new FakeS3Bucket();
 		const config = makeConfig(bucket);

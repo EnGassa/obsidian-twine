@@ -11,12 +11,14 @@ import { getOrCreateSharedSalt, PassphraseMismatchError, verifyOrEstablishKeyChe
 import { SyncManifest } from "./src/sync/manifest";
 import { SyncQueue } from "./src/sync/queue";
 import { runSyncPass } from "./src/sync/sync-engine";
+import { BaseContentCache, SerializedBaseCache } from "./src/sync/base-cache";
 import { registerSyncTriggers } from "./src/triggers/triggers";
 
 interface PluginData {
 	settings: TwineSettings;
 	manifest: unknown;
 	remoteMetaCache: unknown;
+	baseCache?: SerializedBaseCache;
 }
 
 export default class TwinePlugin extends Plugin {
@@ -27,6 +29,8 @@ export default class TwinePlugin extends Plugin {
 	 * foreground interval — see BACKLOG.md #6. */
 	private remoteMetaCache!: RemoteMetaCache;
 	private queue?: SyncQueue;
+	private baseCache?: BaseContentCache;
+	private persistedBaseCache?: SerializedBaseCache;
 	private statusBarItem?: HTMLElement;
 	/** Cached to avoid re-running PBKDF2 (600k iterations, twice) on every
 	 * sync pass. Invalidated whenever the input it was derived from changes —
@@ -68,6 +72,7 @@ export default class TwinePlugin extends Plugin {
 		this.settings = { ...DEFAULT_SETTINGS, ...data.settings };
 		this.syncManifest = SyncManifest.fromJSON(data.manifest ?? []);
 		this.remoteMetaCache = RemoteMetaCache.fromJSON(data.remoteMetaCache);
+		this.persistedBaseCache = data.baseCache;
 	}
 
 	private async persist(): Promise<void> {
@@ -75,6 +80,7 @@ export default class TwinePlugin extends Plugin {
 			settings: this.settings,
 			manifest: this.syncManifest.toJSON(),
 			remoteMetaCache: this.remoteMetaCache.toJSON(),
+			baseCache: this.baseCache?.toJSON() ?? this.persistedBaseCache,
 		};
 		await this.saveData(payload);
 	}
@@ -144,12 +150,19 @@ export default class TwinePlugin extends Plugin {
 		if (this.settings.importedRecoveryKey) {
 			const recoveryKey = this.settings.importedRecoveryKey;
 			if (this.cachedKeys?.source === "recovery" && this.cachedKeys.recoveryKey === recoveryKey) {
+				this.baseCache ??= BaseContentCache.fromJSON(this.cachedKeys.keys.contentKey, this.persistedBaseCache);
 				return this.cachedKeys.keys;
 			}
 
 			const keys = await importRecoveryKey(recoveryKey);
 			await verifyOrEstablishKeyCheck(this.getS3Config(), keys);
 			this.cachedKeys = { source: "recovery", recoveryKey, keys };
+			// A newly selected key source must never reuse entries encrypted for a
+			// previous source. On first load, persisted entries are attempted so a
+			// restart with the same key can recover them; authentication failures
+			// are treated as misses by BaseContentCache.
+			this.baseCache = BaseContentCache.fromJSON(keys.contentKey, this.persistedBaseCache);
+			this.persistedBaseCache = undefined;
 			return keys;
 		}
 
@@ -161,12 +174,15 @@ export default class TwinePlugin extends Plugin {
 			this.cachedKeys.passphrase === passphrase &&
 			this.cachedKeys.salt === salt
 		) {
+			this.baseCache ??= BaseContentCache.fromJSON(this.cachedKeys.keys.contentKey, this.persistedBaseCache);
 			return this.cachedKeys.keys;
 		}
 
 		const keys = await deriveKeys(passphrase, salt);
 		await verifyOrEstablishKeyCheck(this.getS3Config(), keys);
 		this.cachedKeys = { source: "passphrase", passphrase, salt, keys };
+		this.baseCache = BaseContentCache.fromJSON(keys.contentKey, this.persistedBaseCache);
+		this.persistedBaseCache = undefined;
 		return keys;
 	}
 
@@ -191,6 +207,7 @@ export default class TwinePlugin extends Plugin {
 				deviceName: this.settings.deviceName || "unknown-device",
 				hashFn: (bytes) => keyedContentHash(keys.contentHashKey, bytes),
 				persistManifest: () => this.persist(),
+				baseCache: this.baseCache,
 				log: (msg) => console.log(`[twine] ${msg}`),
 			});
 
