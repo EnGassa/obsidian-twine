@@ -50,6 +50,10 @@ export class BaseContentCache {
 	private readonly entries = new Map<string, Entry>();
 	private nextAccess = 1;
 
+	static fromJSON(contentKey: CryptoKey, serialized: unknown): BaseContentCache {
+		return new BaseContentCache(contentKey, serialized);
+	}
+
 	constructor(private readonly contentKey: CryptoKey, serialized?: SerializedBaseCache | string | unknown) {
 		if (typeof serialized === "string") {
 			try {
