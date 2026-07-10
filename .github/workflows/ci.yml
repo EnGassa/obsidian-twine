@@ -1,15 +1,22 @@
-name: CI
+name: CI & Release
 
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
 jobs:
-  test:
+  ci-and-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: pnpm/action-setup@v4
         with:
@@ -26,4 +33,68 @@ jobs:
 
       - run: pnpm test
 
-      - run: pnpm build
+      - run: pnpm run build
+
+      # Check if manifest.json was modified in this push (only for pushes on main branch)
+      - name: Check if manifest.json changed
+        id: files
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$BEFORE" ]; then
+            CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD | grep -q '^manifest.json$' && echo "true" || echo "false")
+          else
+            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" | grep -q '^manifest.json$' && echo "true" || echo "false")
+          fi
+          echo "manifest_changed=$CHANGED" >> "$GITHUB_OUTPUT"
+
+      # Attest build provenance for security/verification
+      - name: Attest build provenance
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.files.outputs.manifest_changed == 'true'
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: main.js
+
+      - name: Read manifest version
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.files.outputs.manifest_changed == 'true'
+        id: manifest
+        run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version was already released
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.files.outputs.manifest_changed == 'true'
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.manifest.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.files.outputs.manifest_changed == 'true' && steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.manifest.outputs.version }}" \
+            main.js manifest.json \
+            --title "${{ steps.manifest.outputs.version }}" \
+            --notes "Automated release for version ${{ steps.manifest.outputs.version }}. See the commit history for details."
+
+      - name: Trigger Obsidian Community Release Check
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.files.outputs.manifest_changed == 'true' && steps.check.outputs.exists == 'false'
+        env:
+          OBS_TOKEN: ${{ secrets.OBS_TOKEN }}
+        run: |
+          if [ -n "$OBS_TOKEN" ]; then
+            echo "Triggering Obsidian Community release check..."
+            curl -s -o /dev/null -w "HTTP %{http_code}\n" \
+              -b "obs_token=$OBS_TOKEN" \
+              -H "Referer: https://community.obsidian.md/account/plugins/twine" \
+              -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" \
+              https://community.obsidian.md/account/plugins/twine/check-release
+          else
+            echo "OBS_TOKEN secret is not set. Skipping release check trigger."
+          fi
