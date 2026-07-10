@@ -1,4 +1,8 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, Mock } from "vitest";
+import { App, PluginManifest } from "obsidian";
+import TwinePlugin from "../main";
+import { SerializedBaseCache } from "../src/sync/base-cache";
+import { TwineSettings } from "../src/settings-schema";
 
 // Mock the obsidian module
 vi.mock("obsidian", () => {
@@ -19,11 +23,11 @@ vi.mock("obsidian", () => {
 			isMobile: false,
 		},
 		PluginSettingTab: class MockPluginSettingTab {
-			constructor(public app: any, public plugin: any) {}
+			constructor(public app: unknown, public plugin: unknown) {}
 			display() {}
 		},
 		Setting: class MockSetting {
-			constructor(public containerEl: any) {}
+			constructor(public containerEl: unknown) {}
 			setName = vi.fn().mockReturnThis();
 			setDesc = vi.fn().mockReturnThis();
 			addText = vi.fn().mockReturnThis();
@@ -37,55 +41,59 @@ vi.mock("obsidian", () => {
 	};
 });
 
-import TwinePlugin from "../main.ts";
-import { SerializedBaseCache } from "../src/sync/base-cache";
-
 describe("TwinePlugin target scoping", () => {
-	let plugin: any;
-	let mockData: any;
+	let plugin: TwinePlugin;
+	let mockData: {
+		settings: TwineSettings;
+		manifest: unknown[];
+		remoteMetaCache: Record<string, unknown>;
+		baseCache: SerializedBaseCache;
+		baseCacheTarget?: string;
+	};
 
 	beforeEach(() => {
 		// Mock globals for Obsidian's browser environment
-		(global as any).window = global;
-		(global as any).activeDocument = {
+		(globalThis as unknown as Record<string, unknown>).window = globalThis;
+		(globalThis as unknown as Record<string, unknown>).activeDocument = {
 			visibilityState: "visible",
 			addEventListener: vi.fn(),
 			removeEventListener: vi.fn(),
 		};
 
-		plugin = new TwinePlugin();
+		plugin = new TwinePlugin(null as unknown as App, null as unknown as PluginManifest);
 		// Set up app mock
 		plugin.app = {
 			workspace: {
 				onLayoutReady: vi.fn(),
-			},
+			} as unknown as App["workspace"],
 			vault: {
 				on: vi.fn(),
-			},
-		};
+			} as unknown as App["vault"],
+		} as unknown as App;
 		mockData = {
 			settings: {
 				endpoint: "https://s3.example.com",
 				region: "us-east-1",
 				bucket: "bucket-a",
+				accessKeyId: "fake-key-id",
+				secretAccessKey: "fake-secret-key",
 				passphrase: "test-passphrase",
-				salt: "test-salt",
+				saltBase64: "test-salt",
+				importedRecoveryKey: "",
 				deviceName: "test-device",
 				syncIntervalSeconds: 10,
+				lastSyncedAt: null,
 			},
 			manifest: [],
 			remoteMetaCache: {},
 			baseCache: {
-				version: 1,
 				entries: {
 					"note.md": {
 						ciphertext: "fake-ciphertext",
-						iv: "fake-iv",
-						authTag: "fake-auth-tag",
-						mtime: 12345,
-						size: 10,
+						access: 1,
 					},
 				},
+				nextAccess: 2,
 			} as SerializedBaseCache,
 			baseCacheTarget: "https://s3.example.com|us-east-1|bucket-a",
 		};
@@ -95,13 +103,13 @@ describe("TwinePlugin target scoping", () => {
 
 	it("preserves the cache on load and persist if the target matches", async () => {
 		await plugin.onload();
-		expect(plugin.persistedBaseCache).toBeDefined();
-		expect(plugin.persistedBaseCacheTarget).toBe("https://s3.example.com|us-east-1|bucket-a");
+		expect(plugin["persistedBaseCache"]).toBeDefined();
+		expect(plugin["persistedBaseCacheTarget"]).toBe("https://s3.example.com|us-east-1|bucket-a");
 
 		// Persisting without changes should keep the cache and target
 		await plugin.saveSettings();
 		expect(plugin.saveData).toHaveBeenCalled();
-		const saved = plugin.saveData.mock.calls[0][0];
+		const saved = (plugin.saveData as Mock).mock.calls[0][0];
 		expect(saved.baseCache).toBeDefined();
 		expect(saved.baseCacheTarget).toBe("https://s3.example.com|us-east-1|bucket-a");
 	});
@@ -109,19 +117,19 @@ describe("TwinePlugin target scoping", () => {
 	it("discards the cache on load if the target does not match", async () => {
 		mockData.baseCacheTarget = "https://s3.example.com|us-east-1|different-bucket";
 		await plugin.onload();
-		expect(plugin.persistedBaseCache).toBeUndefined();
-		expect(plugin.persistedBaseCacheTarget).toBeUndefined();
+		expect(plugin["persistedBaseCache"]).toBeUndefined();
+		expect(plugin["persistedBaseCacheTarget"]).toBeUndefined();
 	});
 
 	it("discards the cache on persist if the settings target changes", async () => {
 		await plugin.onload();
-		expect(plugin.persistedBaseCache).toBeDefined();
+		expect(plugin["persistedBaseCache"]).toBeDefined();
 
 		// Change bucket settings to a different bucket
 		plugin.settings.bucket = "bucket-b";
 
 		await plugin.saveSettings();
-		const saved = plugin.saveData.mock.calls[0][0];
+		const saved = (plugin.saveData as Mock).mock.calls[0][0];
 		expect(saved.baseCache).toBeUndefined();
 		expect(saved.baseCacheTarget).toBeUndefined();
 	});

@@ -16,12 +16,12 @@ export const Platform = {
 };
 
 export class PluginSettingTab {
-	constructor(public app: any, public plugin: any) {}
+	constructor(public app: unknown, public plugin: unknown) {}
 	display() {}
 }
 
 export class Setting {
-	constructor(public containerEl: any) {}
+	constructor(public containerEl: unknown) {}
 	setName = vi.fn().mockReturnThis();
 	setDesc = vi.fn().mockReturnThis();
 	addText = vi.fn().mockReturnThis();
